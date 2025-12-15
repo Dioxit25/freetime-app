@@ -3,8 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 
 // Vercel автоматически подставит переменные окружения из настроек проекта
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+
+// Try standard keys first, then fallback to VITE_ keys if the user only set those
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
+
 // WEB_APP_URL - это ссылка на ваш деплой Vercel (https://project.vercel.app)
 const WEB_APP_URL = process.env.WEB_APP_URL; 
 
