@@ -69,11 +69,11 @@ const TRANSLATIONS = {
     find_time: "Find Time",
     settings: "Settings",
     keep_updated: "Keep it updated!",
-    keep_updated_desc: "The more accurately you mark your busy time, the faster we find a slot for everyone.",
-    my_busy_slots: "MY BUSY SLOTS",
-    free_bird: "You are free as a bird.",
-    weekly: "Weekly Repeat",
-    one_time: "One-time Busy",
+    keep_updated_desc: "Tap a day to view or add slots.",
+    my_busy_slots: "BUSY SLOTS FOR",
+    free_bird: "No busy slots for this day.",
+    weekly: "Weekly",
+    one_time: "One-time",
     weekly_btn: "Weekly",
     one_time_btn: "One Time",
     i_am_busy: "I am busy...",
@@ -107,10 +107,10 @@ const TRANSLATIONS = {
     my_slots: "Мои слоты",
     find_time: "Поиск",
     settings: "Настройки",
-    keep_updated: "Держите график актуальным!",
-    keep_updated_desc: "Чем точнее вы укажете занятость, тем быстрее мы найдем время для встречи.",
-    my_busy_slots: "МОЯ ЗАНЯТОСТЬ",
-    free_bird: "Вы свободны, как птица.",
+    keep_updated: "Ваш календарь",
+    keep_updated_desc: "Нажмите на день, чтобы добавить или изменить слоты.",
+    my_busy_slots: "ЗАНЯТОСТЬ НА",
+    free_bird: "В этот день вы свободны.",
     weekly: "Еженедельно",
     one_time: "Разово",
     weekly_btn: "Каждую неделю",
@@ -512,7 +512,18 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     const { error } = await supabase.from('slots').insert(dbPayload);
     if (error) {
-        alert("Error saving slot: " + error.message);
+        // Fallback for missing column (schema mismatch)
+        if (error.message.includes('description') && (error.message.includes('column') || error.message.includes('schema'))) {
+            const { description, ...safePayload } = dbPayload;
+            const { error: retryErr } = await supabase.from('slots').insert(safePayload);
+            if (retryErr) {
+                alert("Error saving slot: " + retryErr.message);
+            } else {
+                alert("Warning: Note was not saved. Please update database schema (run SQL script).");
+            }
+        } else {
+            alert("Error saving slot: " + error.message);
+        }
     }
   };
 
@@ -621,10 +632,10 @@ const SlotCard: React.FC<{ slot: BusySlot; onDelete: () => void }> = ({ slot, on
     )
 }
 
-const AddSlotModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => {
+const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClose: () => void, initialDate: Date }) => {
     const { addSlot, t, lang } = useContext(AppContext)!;
-    const [type, setType] = useState<SlotType>('CYCLIC_WEEKLY');
-    const [selectedDays, setSelectedDays] = useState<number[]>([1]); // Changed from single number to array
+    const [type, setType] = useState<SlotType>('ONE_TIME'); // Default to One Time when coming from Calendar
+    const [selectedDays, setSelectedDays] = useState<number[]>([1]); 
     const [start, setStart] = useState("09:00");
     const [end, setEnd] = useState("18:00");
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -638,8 +649,22 @@ const AddSlotModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
             setIsAllDay(false);
             setDescription("");
             setIsSaving(false);
+            
+            // Set initial date from Calendar selection
+            if(initialDate) {
+                // Adjust for timezone offset for input[type="date"]
+                const offset = initialDate.getTimezoneOffset();
+                const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
+                setDate(adjDate.toISOString().split('T')[0]);
+                
+                // Also set day of week in case user switches to Cyclic
+                setSelectedDays([initialDate.getDay()]);
+                
+                // If the initial date is in the past, maybe default to next occurance for cyclic? 
+                // For now, keep simple.
+            }
         }
-    }, [isOpen]);
+    }, [isOpen, initialDate]);
 
     if (!isOpen) return null;
 
@@ -670,9 +695,6 @@ const AddSlotModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                 });
             }
         } else {
-            // Create single one-time slot
-            // Calculate ISO strings based on date + time
-            // Note: This is simple concatenation. For robust TZ handling, consider date-fns
             const startD = new Date(`${date}T${finalStart}:00`);
             const endD = new Date(`${date}T${finalEnd}:00`);
             
@@ -711,8 +733,8 @@ const AddSlotModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
 
                 {/* TYPE SWITCHER */}
                 <div className="flex bg-[#27272a] p-1 rounded-lg mb-6">
-                    <button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('weekly_btn')}</button>
                     <button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'ONE_TIME' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('one_time_btn')}</button>
+                    <button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('weekly_btn')}</button>
                 </div>
 
                 <div className="space-y-6 mb-8">
@@ -800,9 +822,129 @@ const AddSlotModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
     );
 };
 
+const MiniCalendar = ({ 
+    mySlots, 
+    selectedDate, 
+    onSelectDate 
+}: { 
+    mySlots: BusySlot[], 
+    selectedDate: Date, 
+    onSelectDate: (d: Date) => void 
+}) => {
+    const { lang } = useContext(AppContext)!;
+    const [viewDate, setViewDate] = useState(new Date());
+
+    const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate();
+    const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1).getDay(); // 0 = Sun
+
+    const changeMonth = (delta: number) => {
+        const newDate = new Date(viewDate);
+        newDate.setMonth(newDate.getMonth() + delta);
+        setViewDate(newDate);
+    };
+
+    // Helper to check if a specific date has any slots
+    const checkSlotStatus = (day: number) => {
+        const checkDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
+        const dayOfWeek = checkDate.getDay();
+        const dateStr = checkDate.toISOString().split('T')[0];
+
+        let hasCyclic = false;
+        let hasOneTime = false;
+
+        mySlots.forEach(slot => {
+            if (slot.type === 'CYCLIC_WEEKLY' && slot.dayOfWeek === dayOfWeek) {
+                hasCyclic = true;
+            }
+            if (slot.type === 'ONE_TIME' && slot.startAt?.startsWith(dateStr)) {
+                hasOneTime = true;
+            }
+        });
+
+        return { hasCyclic, hasOneTime };
+    };
+
+    const daysEn = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    const daysRu = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+    const daysLabels = lang === 'ru' ? daysRu : daysEn;
+
+    return (
+        <div className="bg-[#27272a] rounded-xl p-4 mb-4 shadow-lg">
+            {/* Header */}
+            <div className="flex justify-between items-center mb-4">
+                <button onClick={() => changeMonth(-1)} className="p-2 text-gray-400 hover:text-white"><i className="fa-solid fa-chevron-left"></i></button>
+                <h3 className="font-bold text-lg capitalize">
+                    {viewDate.toLocaleDateString(lang, { month: 'long', year: 'numeric' })}
+                </h3>
+                <button onClick={() => changeMonth(1)} className="p-2 text-gray-400 hover:text-white"><i className="fa-solid fa-chevron-right"></i></button>
+            </div>
+
+            {/* Days Header */}
+            <div className="grid grid-cols-7 mb-2 text-center">
+                {daysLabels.map((d, i) => (
+                    <div key={i} className="text-xs text-gray-500 font-bold">{d}</div>
+                ))}
+            </div>
+
+            {/* Grid */}
+            <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`}></div>)}
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                    const day = i + 1;
+                    const isSelected = 
+                        selectedDate.getDate() === day && 
+                        selectedDate.getMonth() === viewDate.getMonth() &&
+                        selectedDate.getFullYear() === viewDate.getFullYear();
+                    
+                    const { hasCyclic, hasOneTime } = checkSlotStatus(day);
+                    
+                    // Styles
+                    let bgClass = 'bg-transparent';
+                    if (isSelected) bgClass = 'bg-[#3b82f6] text-white shadow-lg shadow-blue-500/50';
+                    else if (hasCyclic) bgClass = 'bg-blue-900/40 text-blue-100 border border-blue-800';
+                    else bgClass = 'hover:bg-white/5';
+
+                    return (
+                        <button 
+                            key={day} 
+                            onClick={() => {
+                                const d = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
+                                onSelectDate(d);
+                            }}
+                            className={`h-10 w-full rounded-lg flex flex-col items-center justify-center relative transition-all active:scale-95 ${bgClass}`}
+                        >
+                            <span className="text-sm font-medium">{day}</span>
+                            {hasOneTime && (
+                                <span className={`w-1.5 h-1.5 rounded-full absolute bottom-1 ${isSelected ? 'bg-white' : 'bg-red-500'}`}></span>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 const MySlotsScreen = () => {
-    const { mySlots, removeSlot, t } = useContext(AppContext)!;
+    const { mySlots, removeSlot, t, lang } = useContext(AppContext)!;
     const [isModalOpen, setModalOpen] = useState(false);
+    const [selectedDate, setSelectedDate] = useState(new Date());
+
+    // Filter slots for the selected date
+    const dailySlots = mySlots.filter(slot => {
+        if (slot.type === 'CYCLIC_WEEKLY') {
+            return slot.dayOfWeek === selectedDate.getDay();
+        }
+        if (slot.type === 'ONE_TIME' && slot.startAt) {
+            const slotDate = new Date(slot.startAt);
+            return (
+                slotDate.getDate() === selectedDate.getDate() &&
+                slotDate.getMonth() === selectedDate.getMonth() &&
+                slotDate.getFullYear() === selectedDate.getFullYear()
+            );
+        }
+        return false;
+    });
 
     return (
         <div className="p-4 pb-24">
@@ -811,22 +953,34 @@ const MySlotsScreen = () => {
                 <p className="text-xs text-blue-200/70">{t('keep_updated_desc')}</p>
             </div>
 
-            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">{t('my_busy_slots')}</h2>
+            <MiniCalendar 
+                mySlots={mySlots} 
+                selectedDate={selectedDate} 
+                onSelectDate={setSelectedDate} 
+            />
+
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">
+                {t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}
+            </h2>
             
-            {mySlots.length === 0 ? (
-                <div className="text-center py-10 opacity-50">
-                    <i className="fa-solid fa-mug-hot text-4xl mb-4 text-gray-600"></i>
-                    <p>{t('free_bird')}</p>
+            {dailySlots.length === 0 ? (
+                <div className="text-center py-6 opacity-50 border border-dashed border-gray-700 rounded-xl">
+                    <i className="fa-solid fa-mug-hot text-2xl mb-2 text-gray-600"></i>
+                    <p className="text-sm">{t('free_bird')}</p>
                 </div>
             ) : (
-                mySlots.map(slot => <SlotCard key={slot.id} slot={slot} onDelete={() => removeSlot(slot.id)} />)
+                dailySlots.map(slot => <SlotCard key={slot.id} slot={slot} onDelete={() => removeSlot(slot.id)} />)
             )}
 
             <button onClick={() => setModalOpen(true)} className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-lg shadow-blue-500/30 flex items-center justify-center active:scale-90 transition z-40">
                 <i className="fa-solid fa-plus text-xl"></i>
             </button>
 
-            <AddSlotModal isOpen={isModalOpen} onClose={() => setModalOpen(false)} />
+            <AddSlotModal 
+                isOpen={isModalOpen} 
+                onClose={() => setModalOpen(false)} 
+                initialDate={selectedDate}
+            />
         </div>
     );
 };
