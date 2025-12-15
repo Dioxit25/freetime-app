@@ -4,12 +4,18 @@ import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
 
-const SUPABASE_URL = 'https://vprvsgjhlqxunnsleals.supabase.co'; 
-const SUPABASE_KEY = 'sb_publishable_gVJj4zEufGL7LU4CC3C59g_3PuNxRpK';
+// Используем переменные окружения Vite (должны начинаться с VITE_)
+const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_KEY;
+// Имя бота можно оставить хардкодом или тоже вынести в .env
 const BOT_USERNAME = 'FreeTimeBot'; 
 
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error("❌ SUPABASE credentials missing! Check your Vercel Environment Variables.");
+}
+
 // Initialize Supabase
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL || '', SUPABASE_KEY || '');
 
 // --- TYPES (Domain Layer) ---
 
@@ -97,16 +103,20 @@ const TRANSLATIONS = {
     group_label: "CURRENT GROUP",
     algo_desc: (count: number, days: number) => `Checking availability for ${count} selected members over next ${days} days.`,
     invite_friends: "Invite Friends",
-    invite_desc: "Send this link to add members:",
+    invite_desc: "Share link to add members:",
     link_copied: "Link copied!",
     copy: "Copy Link",
+    share: "Share to Chat",
     create_group: "Create New Group",
     switching_group: "Switch Group",
     select_members: "Select Participants",
     select_all: "Select All",
     switch_group_title: "My Groups",
     current: "Current",
-    confirm_leave: "Are you sure you want to leave this group?"
+    confirm_leave: "Are you sure you want to leave this group?",
+    no_groups: "No Groups Yet",
+    no_groups_desc: "Add the bot to a Telegram group to get started!",
+    add_to_group_btn: "Add Bot to Group"
   },
   ru: {
     app_name: "TimeAgree",
@@ -145,16 +155,20 @@ const TRANSLATIONS = {
     group_label: "ТЕКУЩАЯ ГРУППА",
     algo_desc: (count: number, days: number) => `Проверка доступности ${count} участников на ближайшие ${days} дн.`,
     invite_friends: "Пригласить друзей",
-    invite_desc: "Отправьте ссылку, чтобы добавить участников:",
+    invite_desc: "Отправьте ссылку участникам:",
     link_copied: "Ссылка скопирована!",
     copy: "Копировать",
+    share: "Отправить в чат",
     create_group: "Создать новую группу",
     switching_group: "Сменить группу",
     select_members: "Участники встречи",
     select_all: "Выбрать всех",
     switch_group_title: "Мои группы",
     current: "Текущая",
-    confirm_leave: "Вы уверены, что хотите покинуть эту группу?"
+    confirm_leave: "Вы уверены, что хотите покинуть эту группу?",
+    no_groups: "Нет групп",
+    no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
+    add_to_group_btn: "Добавить бота в группу"
   }
 };
 
@@ -312,7 +326,7 @@ class TimeFinderService {
 
 interface AppState {
   user: User;
-  group: Group | null; // Group can be null briefly after leaving
+  group: Group | null;
   userGroups: { id: number, title: string }[];
   allSlots: BusySlot[];
   mySlots: BusySlot[];
@@ -343,7 +357,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const initApp = async () => {
       try {
         let tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        const chat = window.Telegram?.WebApp?.initDataUnsafe?.chat;
         const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
         
         if (!tgUser) {
@@ -373,58 +386,44 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         let targetGroupId: number | null = null;
 
-        // SCENARIO A: Opened from a Telegram Group
-        if (chat && (chat.type === 'group' || chat.type === 'supergroup')) {
-            await supabase.from('groups').upsert({
-                id: chat.id,
-                title: chat.title,
-                tier: 'FREE'
-            }); // Upsert group info
-
-            await supabase.from('group_members').upsert({
-                group_id: chat.id,
-                user_id: currentUser.id
-            }, { onConflict: 'group_id, user_id' });
-
-            targetGroupId = chat.id;
-        }
-
-        // SCENARIO B: Invite Link
-        if (!targetGroupId && startParam && startParam.startsWith('gid_')) {
-            const inviteId = parseInt(startParam.split('_')[1]);
+        // PRIORITY 1: Deep Link Invite
+        if (startParam && startParam.startsWith('gid_')) {
+            const idStr = startParam.split('_')[1];
+            const inviteId = parseInt(idStr);
+            console.log("Detected Invite Launch:", inviteId);
+            
             if (!isNaN(inviteId)) {
+                // If we have a backend bot, the Group SHOULD already exist in 'groups' table.
+                // We just link the user.
                 const { error: joinErr } = await supabase.from('group_members').upsert({
                     group_id: inviteId,
                     user_id: currentUser.id
                 }, { onConflict: 'group_id, user_id' });
-                if (!joinErr) targetGroupId = inviteId;
+                
+                if (!joinErr) {
+                    targetGroupId = inviteId;
+                }
             }
         }
 
-        // Fetch User's Groups
+        // Fetch User's Groups (Loaded from DB)
         await fetchUserGroups(currentUser.id);
 
-        // Fallback Group Selection
+        // PRIORITY 2: Fallback (Last used or None)
         if (!targetGroupId) {
-            // Need to fetch groups first to decide (fetching inside fetchUserGroups updates state async, so we do query here)
             const { data: membersData } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id);
+            // If user has groups, pick the first one
             if (membersData && membersData.length > 0) {
-                targetGroupId = membersData[0].group_id; // Pick first found
-            } else {
-                // Create personal default group
-                const newId = Math.floor(Math.random() * 100000000) + 10000;
-                const { error } = await supabase.from('groups').insert({ id: newId, title: "My Personal Plan", tier: "FREE" });
-                if (!error) {
-                    await supabase.from('group_members').insert({ group_id: newId, user_id: currentUser.id });
-                    targetGroupId = newId;
-                    fetchUserGroups(currentUser.id);
-                }
+                targetGroupId = membersData[0].group_id; 
             }
+            // IF user has NO groups, we do NOT create a fake one automatically anymore.
+            // We want them to add the bot to a real group.
         }
 
         if (targetGroupId) {
             await loadGroupData(targetGroupId);
         } else {
+            // No groups loaded. State remains group: null
             setIsLoading(false);
         }
 
@@ -435,7 +434,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       }
     };
 
-    if (!SUPABASE_URL.includes("YOUR_PROJECT_ID")) initApp();
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+         setError("Supabase configuration missing. Please check Vercel Environment Variables.");
+    } else {
+         initApp();
+    }
   }, []);
 
   const fetchUserGroups = async (userId: number) => {
@@ -496,10 +499,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const createNewGroup = async () => {
+      // Manual creation is still allowed for "Personal" testing without a chat
       if(!user) return;
-      const title = prompt("Enter group name:");
+      const title = prompt("Enter group name (Personal):");
       if(!title) return;
-      const manualId = Math.floor(Math.random() * 100000000) + 10000; // Positive ID for manual groups
+      const manualId = Math.floor(Math.random() * 100000000) + 10000;
       const { error } = await supabase.from('groups').insert({ id: manualId, title, tier: "FREE" });
       if(!error) {
           await supabase.from('group_members').insert({ group_id: manualId, user_id: user.id });
@@ -519,13 +523,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       await supabase.from('group_members').delete().match({ group_id: groupId, user_id: user.id });
       await fetchUserGroups(user.id);
       
-      // If we left the current group, switch to another
       const remaining = userGroups.filter(g => g.id !== groupId);
       if (remaining.length > 0) {
           switchGroup(remaining[0].id);
       } else {
-          // No groups left, create default? or reload
-          window.location.reload();
+          setGroup(null); // Show "No groups" state
       }
   };
 
@@ -1002,7 +1004,24 @@ const SettingsScreen = () => {
     if (!group) return null;
 
     const inviteLink = `https://t.me/${BOT_USERNAME}/app?startapp=gid_${group.id}`;
-    const handleCopy = () => { navigator.clipboard.writeText(inviteLink); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    
+    const handleCopy = () => { 
+        navigator.clipboard.writeText(inviteLink); 
+        setCopied(true); 
+        setTimeout(() => setCopied(false), 2000); 
+    };
+
+    const handleShare = () => {
+        const text = `Join my group "${group.title}" in FreeTime!`;
+        const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`;
+        
+        // Use Telegram native sharing if available
+        if (window.Telegram?.WebApp?.openTelegramLink) {
+            window.Telegram.WebApp.openTelegramLink(shareUrl);
+        } else {
+            window.open(shareUrl, '_blank');
+        }
+    };
 
     return (
         <div className="p-4 pb-20 overflow-y-auto h-full">
@@ -1010,11 +1029,16 @@ const SettingsScreen = () => {
             <div className="bg-gradient-to-r from-[#3b82f6] to-[#2563eb] rounded-xl p-5 mb-6 shadow-lg shadow-blue-900/20">
                 <h3 className="font-bold text-white text-lg mb-1 flex items-center gap-2"><i className="fa-solid fa-user-plus"></i> {t('invite_friends')}</h3>
                 <p className="text-blue-100 text-xs mb-4">{t('invite_desc')}</p>
+                
+                {/* Main Action Button */}
+                <button onClick={handleShare} className="w-full bg-white text-blue-600 py-3 rounded-lg font-bold text-sm mb-3 shadow-md active:scale-95 transition flex items-center justify-center gap-2">
+                    <i className="fa-solid fa-paper-plane"></i> {t('share')}
+                </button>
+
                 <div className="flex gap-2">
-                    <div className="bg-black/20 flex-1 rounded px-3 py-2 text-xs font-mono text-blue-100 truncate flex items-center">{inviteLink}</div>
-                    <button onClick={handleCopy} className="bg-white text-blue-600 px-4 py-2 rounded font-bold text-xs active:scale-95 transition shadow-sm">{copied ? <i className="fa-solid fa-check"></i> : t('copy')}</button>
+                    <div className="bg-black/20 flex-1 rounded px-3 py-2 text-xs font-mono text-blue-100 truncate flex items-center border border-white/10">{inviteLink}</div>
+                    <button onClick={handleCopy} className="bg-white/20 text-white px-3 py-2 rounded font-bold text-xs active:scale-95 transition hover:bg-white/30">{copied ? <i className="fa-solid fa-check"></i> : <i className="fa-regular fa-copy"></i>}</button>
                 </div>
-                {copied && <div className="text-xs text-white mt-2 font-bold animate-pulse">{t('link_copied')}</div>}
             </div>
             
             <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6">
@@ -1022,7 +1046,10 @@ const SettingsScreen = () => {
                 <div className="p-4 flex justify-between items-center"><span>{t('my_name')}</span><span className="text-gray-400 text-sm">@{user.username}</span></div>
             </div>
 
-            <h3 className="text-sm font-bold text-gray-500 mb-2 uppercase">{t('group_label')}: {group.title}</h3>
+            <div className="flex justify-between items-center mb-2 px-1">
+                <h3 className="text-sm font-bold text-gray-500 uppercase">{t('group_label')}: {group.title}</h3>
+                <span className="text-[10px] text-gray-600 font-mono">ID: {group.id}</span>
+            </div>
             <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6">
                 {group.members.map(m => (
                     <div key={m.id} className="p-4 border-b border-gray-700 last:border-0 flex items-center gap-3">
@@ -1032,20 +1059,47 @@ const SettingsScreen = () => {
                 ))}
             </div>
 
-            <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 text-sm font-bold bg-[#27272a] rounded-xl border border-dashed border-gray-700"><i className="fa-solid fa-plus mr-2"></i> {t('create_group')}</button>
-            <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 text-sm font-bold bg-[#27272a] rounded-xl">{t('leave_group')}</button>
-            <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.4 (Beta)</div>
+            <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 text-sm font-bold bg-[#27272a] rounded-xl border border-dashed border-gray-700 hover:bg-[#323236] transition"><i className="fa-solid fa-plus mr-2"></i> {t('create_group')}</button>
+            <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 text-sm font-bold bg-[#27272a] rounded-xl hover:bg-[#323236] transition">{t('leave_group')}</button>
+            <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.5 (Beta)</div>
         </div>
     );
+}
+
+const EmptyStateScreen = () => {
+    const { createNewGroup, t } = useContext(AppContext)!;
+
+    const handleAddBot = () => {
+        window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank');
+    };
+
+    return (
+        <div className="flex flex-col items-center justify-center h-screen p-6 text-center">
+            <div className="w-24 h-24 bg-[#27272a] rounded-full flex items-center justify-center mb-6 shadow-lg shadow-blue-500/10">
+                <i className="fa-solid fa-user-group text-4xl text-[#3b82f6]"></i>
+            </div>
+            <h1 className="text-2xl font-bold mb-2">{t('no_groups')}</h1>
+            <p className="text-gray-400 mb-8 max-w-xs">{t('no_groups_desc')}</p>
+            
+            <button onClick={handleAddBot} className="w-full max-w-xs bg-[#3b82f6] text-white py-3 rounded-xl font-bold mb-4 shadow-lg active:scale-95 transition">
+                {t('add_to_group_btn')}
+            </button>
+            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold p-2">
+                {t('create_group')} (Personal)
+            </button>
+        </div>
+    )
 }
 
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('slots');
   const context = useContext(AppContext);
 
-  if (SUPABASE_URL.includes("YOUR_PROJECT_ID")) return <div className="min-h-screen bg-[#18181b] text-white flex flex-col items-center justify-center p-6 text-center"><i className="fa-solid fa-database text-4xl mb-4 text-yellow-500"></i><h1 className="text-xl font-bold mb-2">Supabase Setup Required</h1><p className="text-gray-400 text-sm">Please open <code>index.tsx</code> and replace <code>SUPABASE_URL</code> and <code>SUPABASE_KEY</code>.</p></div>
   if (context?.error) return <div className="min-h-screen bg-[#18181b] text-white flex flex-col items-center justify-center p-8 text-center"><i className="fa-solid fa-triangle-exclamation text-4xl mb-4 text-red-500"></i><h1 className="text-xl font-bold mb-2">Setup Error</h1><p className="text-red-200 text-sm mb-6 bg-red-900/20 p-4 rounded-lg border border-red-500/30">{context.error}</p></div>
-  if (context?.isLoading || !context?.group) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>
+  if (context?.isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>
+
+  // If user has no groups and no direct invite, show empty state
+  if (!context?.group) return <EmptyStateScreen />;
 
   const renderScreen = () => {
       switch(activeTab) {
