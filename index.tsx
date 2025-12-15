@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, createContext, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
 
@@ -13,7 +13,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // --- TYPES (Domain Layer) ---
 
-type Role = 'OWNER' | 'ADMIN' | 'MEMBER';
 type SlotType = 'ONE_TIME' | 'CYCLIC_WEEKLY';
 type PlanTier = 'FREE' | 'GROUP_PRO' | 'BUSINESS';
 type LangCode = 'en' | 'ru';
@@ -234,7 +233,7 @@ class TimeFinderService {
       .sort((a, b) => a.start.getTime() - b.start.getTime());
   }
 
-  private static expandCyclicSlot(slot: BusySlot, windowStart: Date, windowEnd: Date, userTimezone: string): TimeSlot[] {
+  private static expandCyclicSlot(slot: BusySlot, windowStart: Date, windowEnd: Date, _userTimezone: string): TimeSlot[] {
     const result: TimeSlot[] = [];
     let current = new Date(windowStart);
     current.setHours(0,0,0,0);
@@ -524,7 +523,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const t = (key: string, ...args: any[]) => {
     const dict = TRANSLATIONS[lang] || TRANSLATIONS['en'];
     const val = dict[key as keyof typeof dict];
-    if (typeof val === 'function') return val(...args);
+    if (typeof val === 'function') {
+        // Fix for TS2556: Cast val to any or generic function to allow spread args
+        return (val as any)(...args);
+    }
     return val || key;
   };
 
