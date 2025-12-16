@@ -1,54 +1,41 @@
 import { Telegraf, Markup } from 'telegraf';
 import { createClient } from '@supabase/supabase-js';
 
-// Vercel автоматически подставит переменные окружения из настроек проекта
 const BOT_TOKEN = process.env.BOT_TOKEN;
-
-// Try standard keys first, then fallback to VITE_ keys if the user only set those
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
-
-// WEB_APP_URL - это ссылка на ваш деплой Vercel (https://project.vercel.app)
 const WEB_APP_URL = process.env.WEB_APP_URL; 
 
-console.log(`[BOT INIT] Token present: ${!!BOT_TOKEN}, DB URL present: ${!!SUPABASE_URL}, WebApp URL: ${WEB_APP_URL}`);
+console.log(`[BOT INIT] Token: ${!!BOT_TOKEN}, DB: ${!!SUPABASE_URL}, WebApp: ${WEB_APP_URL}`);
 
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
+const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Initialize Supabase only if keys are present
-const supabase = (SUPABASE_URL && SUPABASE_KEY) 
-    ? createClient(SUPABASE_URL, SUPABASE_KEY) 
-    : null;
+// --- COMMANDS ---
 
-// --- ЛОГИКА БОТА ---
-
-// 1. Простая проверка, работает ли бот
 bot.command('ping', async (ctx) => {
-    console.log(`[CMD] /ping from ${ctx.from.id}`);
-    await ctx.reply('Pong! 🏓 Бот работает и видит сообщения.');
+    await ctx.reply('Pong! 🏓 Bot is active.');
 });
 
 bot.start((ctx) => {
-    console.log(`[CMD] /start from ${ctx.from.id}`);
-    ctx.reply('Добро пожаловать в FreeTime! 🗓\nДобавьте меня в группу с друзьями, и я найду время для встречи.', 
+    ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями, и я создам общий календарь!', 
         Markup.inlineKeyboard([
-            Markup.button.webApp('🚀 Запустить', WEB_APP_URL || 'https://google.com'),
             Markup.button.url('➕ Добавить в группу', `https://t.me/${ctx.botInfo.username}?startgroup=true`)
         ])
     );
 });
 
-// 2. Обработка добавления в группу (автоматическая)
+// --- GROUP LOGIC ---
+
 bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
     try {
         const chat = ctx.chat;
         const newStatus = ctx.myChatMember?.new_chat_member?.status;
-        console.log(`[EVENT] Member status change in ${chat.id} (${chat.type}): ${newStatus}`);
-
-        // Если бота удалили, игнорируем
+        
+        // Ignore leaving events
         if (newStatus === 'left' || newStatus === 'kicked') return;
 
-        // Реагируем только в группах
+        // Only act in groups
         if (chat.type === 'group' || chat.type === 'supergroup') {
             await initializeGroup(ctx, chat.id, chat.title);
         }
@@ -57,25 +44,17 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
     }
 });
 
-// 3. Ручная команда инициализации (если бот уже в группе, но промолчал)
 bot.command('init', async (ctx) => {
-    console.log(`[CMD] /init in ${ctx.chat.id}`);
-    if (ctx.chat.type === 'private') {
-        return ctx.reply('Эту команду нужно писать внутри группы.');
-    }
+    if (ctx.chat.type === 'private') return ctx.reply('Эту команду нужно писать внутри группы.');
     await initializeGroup(ctx, ctx.chat.id, ctx.chat.title);
 });
 
-// Вспомогательная функция регистрации группы
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
-    if (!supabase) {
-        console.error("[DB ERROR] Supabase not configured");
-        return ctx.reply("⚠️ Ошибка: База данных не подключена на сервере.");
-    }
+    if (!supabase) return ctx.reply("⚠️ Ошибка: База данных не подключена.");
 
     console.log(`[INIT GROUP] ${chatId} - ${chatTitle}`);
     
-    // 1. Сохраняем группу в Supabase
+    // 1. Register Group
     const { error } = await supabase.from('groups').upsert({
         id: chatId,
         title: chatTitle,
@@ -84,54 +63,42 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
 
     if (error) {
         console.error("[DB ERROR]", error);
-        return ctx.reply(`⚠️ Ошибка базы данных: ${error.message}`);
+        return ctx.reply(`⚠️ Ошибка БД: ${error.message}`);
     }
 
-    // 2. Отвечаем в чат
-    // IMPORTANT: When passing start_param in URL, it usually maps to tgWebAppStartParam in the app
-    const appLink = `${WEB_APP_URL}?startapp=gid_${chatId}`;
-    console.log(`[REPLY] Sending App Link: ${appLink}`);
+    // 2. Generate Guaranteed Link (Deep Link)
+    // Using t.me link forces Telegram to handle the start_param correctly on all devices
+    const deepLink = `https://t.me/${ctx.botInfo.username}/app?startapp=gid_${chatId}`;
 
-    await ctx.reply(`👋 Привет, ${chatTitle}! Я готов искать свободное время.`, 
-        Markup.inlineKeyboard([
-            Markup.button.webApp('📅 Открыть Календарь', appLink)
-        ])
+    // 3. Generate Direct Link with Hash (Backup)
+    // Hash (#) survives server-side redirects better than Query (?)
+    const webLink = `${WEB_APP_URL}#gid=${chatId}`;
+
+    await ctx.reply(
+        `🗓 <b>Календарь создан!</b>\n\nГруппа: ${chatTitle}\nНажмите кнопку ниже, чтобы отметить свободное время.`, 
+        {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                // Primary Button: Uses t.me link. 
+                // This will open the app and GUARANTEE start_param is passed.
+                [Markup.button.url('🚀 Открыть Календарь', deepLink)],
+                
+                // Secondary/Debug Button (Optional, can be removed if confusing)
+                // [Markup.button.webApp('🌐 Web Version', webLink)] 
+            ])
+        }
     );
 }
 
 // --- VERCEL HANDLER ---
 export default async function handler(request: any, response: any) {
-    // 1. Check for GET request (Browser visit)
-    if (request.method === 'GET') {
-        return response.status(200).send(`
-            <html>
-                <body style="font-family: sans-serif; text-align: center; padding: 50px;">
-                    <h1>🤖 Bot is Running</h1>
-                    <p>Status: <strong>Online</strong></p>
-                    <p>Endpoint: <code>/api/bot</code></p>
-                    <p style="color: gray; font-size: 0.9em;">Make sure your Webhook URL points here.</p>
-                </body>
-            </html>
-        `);
-    }
-
-    // 2. Check Configuration
-    if (!BOT_TOKEN) {
-        return response.status(500).json({ error: 'BOT_TOKEN is missing in Environment Variables' });
-    }
-
-    // 3. Handle Telegram Update
+    if (request.method === 'GET') return response.status(200).send('Bot is running.');
+    if (!BOT_TOKEN) return response.status(500).json({ error: 'No Token' });
     try {
-        const { body } = request;
-        if (!body) {
-             console.log("[WARN] Empty body received");
-             return response.status(400).json({ error: 'No body provided' });
-        }
-        await bot.handleUpdate(body);
+        await bot.handleUpdate(request.body);
         response.status(200).json({ ok: true });
-    } catch (error: any) {
-        console.error('Error handling update:', error);
-        // Don't crash Telegram with 500, log it and return 200 so they stop retrying bad updates
-        response.status(200).json({ error: error.message });
+    } catch (e: any) {
+        console.error(e);
+        response.status(200).json({ error: e.message });
     }
 }
