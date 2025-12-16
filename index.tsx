@@ -1068,13 +1068,24 @@ const SettingsScreen = () => {
 
 const EmptyStateScreen = () => {
     const { createNewGroup, t } = useContext(AppContext)!;
+    const [showSetup, setShowSetup] = useState(false);
+    const [token, setToken] = useState('');
+    const [generatedLink, setGeneratedLink] = useState('');
 
     const handleAddBot = () => {
         window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank');
     };
 
+    const handleGenerate = () => {
+        // Strip extra chars if user copy-pasted weirdly
+        const cleanToken = token.trim();
+        const origin = window.location.origin; // https://myapp.vercel.app
+        const link = `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${origin}/api/bot`;
+        setGeneratedLink(link);
+    };
+
     return (
-        <div className="flex flex-col items-center justify-center h-screen p-6 text-center">
+        <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
             <div className="w-24 h-24 bg-[#27272a] rounded-full flex items-center justify-center mb-6 shadow-lg shadow-blue-500/10">
                 <i className="fa-solid fa-user-group text-4xl text-[#3b82f6]"></i>
             </div>
@@ -1084,9 +1095,51 @@ const EmptyStateScreen = () => {
             <button onClick={handleAddBot} className="w-full max-w-xs bg-[#3b82f6] text-white py-3 rounded-xl font-bold mb-4 shadow-lg active:scale-95 transition">
                 {t('add_to_group_btn')}
             </button>
-            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold p-2">
+            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold p-2 mb-8">
                 {t('create_group')} (Personal)
             </button>
+
+            {/* Developer Helper Tool */}
+            <div className="w-full max-w-xs border-t border-gray-800 pt-6 mt-6">
+                <button 
+                    onClick={() => setShowSetup(!showSetup)} 
+                    className="text-xs text-gray-600 flex items-center justify-center gap-2 mx-auto hover:text-gray-400"
+                >
+                    <i className="fa-solid fa-wrench"></i> Setup Webhook (Dev)
+                </button>
+                
+                {showSetup && (
+                    <div className="mt-4 bg-[#1e1e20] p-4 rounded-lg text-left slide-in border border-gray-700">
+                        <p className="text-[10px] text-gray-400 mb-2">Use this if the bot is silent in groups. Only works on Vercel (not localhost).</p>
+                        <input 
+                            type="text" 
+                            placeholder="Paste Bot Token here..." 
+                            className="w-full bg-black/30 text-xs p-2 rounded border border-gray-700 mb-2 text-white"
+                            value={token}
+                            onChange={(e) => setToken(e.target.value)}
+                        />
+                        <button 
+                            onClick={handleGenerate} 
+                            className="w-full bg-gray-700 text-xs py-2 rounded text-white font-bold mb-2"
+                        >
+                            Generate Link
+                        </button>
+                        
+                        {generatedLink && (
+                            <a 
+                                href={generatedLink} 
+                                target="_blank" 
+                                className="block text-center bg-green-600 text-white text-xs py-2 rounded font-bold"
+                            >
+                                Click to Set Webhook
+                            </a>
+                        )}
+                        {window.location.hostname === 'localhost' && (
+                             <p className="text-red-500 text-[10px] mt-2 font-bold">⚠️ Warning: You are on localhost. Telegram cannot reach this URL.</p>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     )
 }
