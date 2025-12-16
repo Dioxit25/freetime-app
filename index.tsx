@@ -750,12 +750,15 @@ const SearchScreen = () => {
     );
 };
 const SettingsScreen = () => {
-    const { group, user, t, createNewGroup, leaveGroup } = useContext(AppContext)!;
+    const { group, user, t, createNewGroup, leaveGroup, logs } = useContext(AppContext)!;
     const [copied, setCopied] = useState(false);
+    const [showDebug, setShowDebug] = useState(false);
+
     if (!group) return null;
     const inviteLink = `https://t.me/${BOT_USERNAME}/app?startapp=gid_${group.id}`;
     const handleCopy = () => { navigator.clipboard.writeText(inviteLink); setCopied(true); setTimeout(() => setCopied(false), 2000); };
     const handleShare = () => { const text = `Join my group "${group.title}" in FreeTime!`; const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`; if (window.Telegram?.WebApp?.openTelegramLink) { window.Telegram.WebApp.openTelegramLink(shareUrl); } else { window.open(shareUrl, '_blank'); } };
+    
     return (
         <div className="p-4 pb-20 overflow-y-auto h-full">
             <h2 className="text-xl font-bold mb-6">{t('settings')}</h2>
@@ -766,6 +769,22 @@ const SettingsScreen = () => {
             <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 text-sm font-bold bg-[#27272a] rounded-xl border border-dashed border-gray-700 hover:bg-[#323236] transition"><i className="fa-solid fa-plus mr-2"></i> {t('create_group')}</button>
             <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 text-sm font-bold bg-[#27272a] rounded-xl hover:bg-[#323236] transition">{t('leave_group')}</button>
             <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.6 (Beta)</div>
+            
+            <div className="mt-8 pt-4 border-t border-gray-800 text-center">
+                <button onClick={() => setShowDebug(true)} className="text-xs text-yellow-600 font-mono flex items-center justify-center gap-2 mx-auto">
+                    <i className="fa-solid fa-bug"></i> Show Debug Logs
+                </button>
+            </div>
+
+            {showDebug && (
+                <div className="fixed inset-0 z-[100] bg-black/95 p-6 overflow-y-auto text-left font-mono text-xs">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-green-500 font-bold">Debug Console</h3>
+                        <button onClick={() => setShowDebug(false)} className="text-white p-2">✕</button>
+                    </div>
+                    {logs.map((l, i) => <div key={i} className="mb-1 border-b border-gray-800 pb-1 text-gray-300">{l}</div>)}
+                </div>
+            )}
         </div>
     );
 }
