@@ -6,7 +6,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 const WEB_APP_URL = process.env.WEB_APP_URL; 
 
-console.log(`[BOT INIT] Token: ${!!BOT_TOKEN}, DB: ${!!SUPABASE_URL}, WebApp: ${WEB_APP_URL}`);
+// Initial log to Vercel console
+console.log(`[BOT STARTUP] Token: ${!!BOT_TOKEN}, DB: ${!!SUPABASE_URL}, WebApp: ${WEB_APP_URL}`);
 
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
@@ -14,6 +15,7 @@ const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUP
 // --- COMMANDS ---
 
 bot.command('ping', async (ctx) => {
+    console.log(`[PING] from ${ctx.from.id}`);
     await ctx.reply('Pong! 🏓 Bot is active.');
 });
 
@@ -31,6 +33,7 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
     try {
         const chat = ctx.chat;
         const newStatus = ctx.myChatMember?.new_chat_member?.status;
+        console.log(`[EVENT] Chat Member Update: ${chat.id} status: ${newStatus}`);
         
         // Ignore leaving events
         if (newStatus === 'left' || newStatus === 'kicked') return;
@@ -45,14 +48,18 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
 });
 
 bot.command('init', async (ctx) => {
+    console.log(`[CMD] /init in ${ctx.chat.id} (${ctx.chat.type})`);
     if (ctx.chat.type === 'private') return ctx.reply('Эту команду нужно писать внутри группы.');
     await initializeGroup(ctx, ctx.chat.id, ctx.chat.title);
 });
 
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
-    if (!supabase) return ctx.reply("⚠️ Ошибка: База данных не подключена.");
+    if (!supabase) {
+        console.error("Supabase is missing!");
+        return ctx.reply("⚠️ Ошибка: База данных не подключена.");
+    }
 
-    console.log(`[INIT GROUP] ${chatId} - ${chatTitle}`);
+    console.log(`[INIT GROUP] Attempting to register ${chatId} - ${chatTitle}`);
     
     // 1. Register Group
     const { error } = await supabase.from('groups').upsert({
@@ -67,24 +74,14 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     }
 
     // 2. Generate Guaranteed Link (Deep Link)
-    // Using t.me link forces Telegram to handle the start_param correctly on all devices
     const deepLink = `https://t.me/${ctx.botInfo.username}/app?startapp=gid_${chatId}`;
-
-    // 3. Generate Direct Link with Hash (Backup)
-    // Hash (#) survives server-side redirects better than Query (?)
-    const webLink = `${WEB_APP_URL}#gid=${chatId}`;
 
     await ctx.reply(
         `🗓 <b>Календарь создан!</b>\n\nГруппа: ${chatTitle}\nНажмите кнопку ниже, чтобы отметить свободное время.`, 
         {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-                // Primary Button: Uses t.me link. 
-                // This will open the app and GUARANTEE start_param is passed.
-                [Markup.button.url('🚀 Открыть Календарь', deepLink)],
-                
-                // Secondary/Debug Button (Optional, can be removed if confusing)
-                // [Markup.button.webApp('🌐 Web Version', webLink)] 
+                [Markup.button.url('🚀 Открыть Календарь', deepLink)]
             ])
         }
     );
@@ -92,13 +89,37 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
 
 // --- VERCEL HANDLER ---
 export default async function handler(request: any, response: any) {
-    if (request.method === 'GET') return response.status(200).send('Bot is running.');
-    if (!BOT_TOKEN) return response.status(500).json({ error: 'No Token' });
+    // DIAGNOSTIC ENDPOINT (GET)
+    if (request.method === 'GET') {
+        return response.status(200).json({ 
+            status: 'Bot is running',
+            env: {
+                hasToken: !!BOT_TOKEN,
+                hasDBUrl: !!SUPABASE_URL,
+                hasDBKey: !!SUPABASE_KEY,
+                webAppUrl: WEB_APP_URL || 'Not Set'
+            }
+        });
+    }
+
+    // WEBHOOK ENDPOINT (POST)
+    if (!BOT_TOKEN) {
+        console.error("BOT_TOKEN is missing in Vercel Env Vars");
+        return response.status(500).json({ error: 'No Token' });
+    }
+
     try {
+        // Log incoming update type for debugging
+        if (request.body && request.body.message) {
+            console.log(`[UPDATE] Msg: ${request.body.message.text} from ${request.body.message.chat.id}`);
+        } else if (request.body && request.body.my_chat_member) {
+            console.log(`[UPDATE] Chat Member Status Change`);
+        }
+
         await bot.handleUpdate(request.body);
         response.status(200).json({ ok: true });
     } catch (e: any) {
-        console.error(e);
+        console.error("Bot Handle Error:", e);
         response.status(200).json({ error: e.message });
     }
 }
