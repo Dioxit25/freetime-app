@@ -829,16 +829,31 @@ const EmptyStateScreen = () => {
     const [showSetup, setShowSetup] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
     const [token, setToken] = useState('');
+    const [customUrl, setCustomUrl] = useState('');
     const [generatedLink, setGeneratedLink] = useState('');
     const [forceId, setForceId] = useState('');
 
     const handleAddBot = () => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank');
     const handleGenerate = () => {
         const cleanToken = token.trim();
-        const origin = window.location.origin;
+        let origin = window.location.origin;
+
+        // Check for Localhost
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        if (isLocal) {
+            if (!customUrl) {
+                alert("You are on localhost. Please enter your deployed Vercel URL (e.g. https://my-app.vercel.app)");
+                return;
+            }
+            origin = customUrl.replace(/\/$/, ""); // remove trailing slash
+        }
+
         const link = `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${origin}/api/bot`;
         setGeneratedLink(link);
     };
+
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
@@ -881,6 +896,14 @@ const EmptyStateScreen = () => {
             {showSetup && (
                 <div className="mt-4 bg-[#1e1e20] p-4 rounded-lg text-left slide-in border border-gray-700 w-full max-w-xs">
                     <p className="text-[10px] text-gray-400 mb-2">Use this if the bot is silent in groups.</p>
+                    
+                    {isLocal && (
+                         <div className="mb-2">
+                            <label className="text-[10px] text-yellow-500 font-bold block mb-1">Localhost Detected! Enter Vercel URL:</label>
+                            <input type="text" placeholder="https://your-app.vercel.app" className="w-full bg-black/30 text-xs p-2 rounded border border-yellow-800 mb-1 text-white" value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} />
+                         </div>
+                    )}
+
                     <input type="text" placeholder="Paste Bot Token here..." className="w-full bg-black/30 text-xs p-2 rounded border border-gray-700 mb-2 text-white" value={token} onChange={(e) => setToken(e.target.value)} />
                     <button onClick={handleGenerate} className="w-full bg-gray-700 text-xs py-2 rounded text-white font-bold mb-2">Generate Link</button>
                     {generatedLink && ( <a href={generatedLink} target="_blank" className="block text-center bg-green-600 text-white text-xs py-2 rounded font-bold">Click to Set Webhook</a> )}
