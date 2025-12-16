@@ -3,8 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
+// Use environment variables directly to avoid TS unused variable errors
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
+
+// YOUR DEPLOYED URL
+const WEB_APP_URL = 'https://freetime-app-rho.vercel.app';
 
 // Initial log (Will appear in Vercel Function Logs)
 console.log(`[STARTUP] Token Present: ${!!BOT_TOKEN}`);
@@ -13,7 +17,7 @@ console.log(`[STARTUP] DB URL Present: ${!!SUPABASE_URL}`);
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Global cache for bot info
+// Global cache for bot info to prevent repeated API calls in serverless environment
 let botInfoCache: any = null;
 
 // --- COMMANDS ---
@@ -39,10 +43,10 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
     console.log(`[EVENT] Member Status Change in ${ctx.chat.id}`);
     const chat = ctx.chat;
     if (chat.type === 'group' || chat.type === 'supergroup') {
-        // Checking if bot was added
         const newMember = (ctx.message as any)?.new_chat_member;
         const myStatus = ctx.myChatMember?.new_chat_member?.status;
 
+        // Initialize if bot is added or status changes to admin/member
         if (newMember?.id === ctx.botInfo.id || myStatus === 'member' || myStatus === 'administrator') {
              await initializeGroup(ctx, chat.id, chat.title);
         }
@@ -50,9 +54,8 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
 });
 
 bot.command('init', async (ctx) => {
-    console.log(`[CMD] /init in chat: ${ctx.chat.id}, type: ${ctx.chat.type}`);
+    console.log(`[CMD] /init in chat: ${ctx.chat.id}`);
     
-    // Explicitly answer if in private chat
     if (ctx.chat.type === 'private') {
         return ctx.reply('Команда /init работает только внутри групп. Добавьте меня в группу!');
     }
@@ -61,14 +64,13 @@ bot.command('init', async (ctx) => {
 });
 
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
-    console.log(`[INIT] Starting logic for Group: ${chatTitle} (${chatId})`);
+    console.log(`[INIT] Group: ${chatTitle} (${chatId})`);
 
     if (!supabase) {
-        console.error("[ERROR] Supabase credentials missing");
-        return ctx.reply("⚠️ Ошибка: База данных не подключена (проверьте env vars).");
+        return ctx.reply("⚠️ Ошибка: База данных не подключена.");
     }
 
-    // 1. Register Group in DB
+    // 1. Register/Update Group in DB (Yes, this creates the group automatically)
     const { error } = await supabase.from('groups').upsert({
         id: chatId,
         title: chatTitle,
@@ -78,71 +80,49 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     if (error) {
         console.error("[DB ERROR]", error);
         return ctx.reply(`⚠️ Ошибка базы данных: ${error.message}`);
-    } else {
-        console.log(`[DB SUCCESS] Group upserted`);
     }
 
-    // 2. Prepare Link
-    const username = ctx.botInfo?.username;
-    if (!username) console.warn("[WARN] Bot username is missing in ctx");
+    // 2. Prepare Direct Web App URL
+    // passing ?gid=... allows the frontend to read it via URLSearchParams if start_param fails
+    const webAppUrl = `${WEB_APP_URL}?gid=${chatId}`;
 
-    const deepLink = `https://t.me/${username || 'FreeTimeBot'}/app?startapp=gid_${chatId}`;
-    console.log(`[LINK] Generated: ${deepLink}`);
-
-    // 3. Send Reply
+    // 3. Send Reply with Web App Button
     try {
         await ctx.reply(
             `🗓 <b>Календарь для группы "${chatTitle}" готов!</b>\n\nНажмите кнопку, чтобы отметить свое свободное время.`, 
             {
                 parse_mode: 'HTML',
                 ...Markup.inlineKeyboard([
-                    [Markup.button.url('🚀 Открыть Календарь', deepLink)]
+                    [Markup.button.webApp('🚀 Открыть Календарь', webAppUrl)]
                 ])
             }
         );
-        console.log(`[SUCCESS] Reply sent to ${chatId}`);
     } catch (e: any) {
-        console.error(`[TELEGRAM ERROR] Could not reply: ${e.message}`);
+        console.error(`[TELEGRAM ERROR] ${e.message}`);
     }
 }
 
-// --- VERCEL HANDLER ---
+// --- VERCEL SERVERLESS HANDLER ---
 export default async function handler(request: any, response: any) {
-    console.log(`[REQ] Method: ${request.method}`);
-
-    // DIAGNOSTIC ENDPOINT
+    // Diagnostic for browser checks
     if (request.method === 'GET') {
         return response.status(200).json({ 
             status: 'Bot Active', 
-            time: new Date().toISOString(),
-            env_check: {
-                token: !!BOT_TOKEN,
-                supabase: !!SUPABASE_URL
-            }
+            time: new Date().toISOString()
         });
     }
 
-    // WEBHOOK HANDLING
     try {
-        if (!BOT_TOKEN) throw new Error("BOT_TOKEN is missing");
-        
+        if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
         const body = request.body;
-        if (!body) throw new Error("No body provided");
 
-        // Log raw update for debugging
-        if (body.message && body.message.text) {
-            console.log(`[MSG] Text: "${body.message.text}" from ${body.message.chat.id}`);
-        }
-
-        // Initialize Bot Info Cache (Fix for Serverless)
+        // Initialize Bot Info (Fix for Serverless cold starts)
         if (!bot.botInfo) {
             if (botInfoCache) {
                 bot.botInfo = botInfoCache;
             } else {
-                console.log("[SETUP] Fetching getMe()...");
                 botInfoCache = await bot.telegram.getMe();
                 bot.botInfo = botInfoCache;
-                console.log(`[SETUP] Bot: @${botInfoCache.username}`);
             }
         }
 
