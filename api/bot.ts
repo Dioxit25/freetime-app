@@ -12,6 +12,9 @@ console.log(`[BOT STARTUP] Token: ${!!BOT_TOKEN}, DB: ${!!SUPABASE_URL}, WebApp:
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
+// Global var to cache bot info across hot lambda invocations
+let botInfoCache: any = null;
+
 // --- COMMANDS ---
 
 bot.command('ping', async (ctx) => {
@@ -20,9 +23,10 @@ bot.command('ping', async (ctx) => {
 });
 
 bot.start((ctx) => {
+    const username = ctx.botInfo?.username || 'FreeTimeBot';
     ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями, и я создам общий календарь!', 
         Markup.inlineKeyboard([
-            Markup.button.url('➕ Добавить в группу', `https://t.me/${ctx.botInfo.username}?startgroup=true`)
+            Markup.button.url('➕ Добавить в группу', `https://t.me/${username}?startgroup=true`)
         ])
     );
 });
@@ -73,8 +77,14 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
         return ctx.reply(`⚠️ Ошибка БД: ${error.message}`);
     }
 
+    // Ensure we have a username. If for some reason ctx.botInfo is missing, fallback to empty (link might break but won't crash)
+    const username = ctx.botInfo?.username;
+    if (!username) {
+        console.error("CRITICAL: ctx.botInfo is missing. Link will be broken.");
+    }
+    
     // 2. Generate Guaranteed Link (Deep Link)
-    const deepLink = `https://t.me/${ctx.botInfo.username}/app?startapp=gid_${chatId}`;
+    const deepLink = `https://t.me/${username}/app?startapp=gid_${chatId}`;
 
     await ctx.reply(
         `🗓 <b>Календарь создан!</b>\n\nГруппа: ${chatTitle}\nНажмите кнопку ниже, чтобы отметить свободное время.`, 
@@ -114,6 +124,22 @@ export default async function handler(request: any, response: any) {
             console.log(`[UPDATE] Msg: ${request.body.message.text} from ${request.body.message.chat.id}`);
         } else if (request.body && request.body.my_chat_member) {
             console.log(`[UPDATE] Chat Member Status Change`);
+        }
+
+        // Initialize bot info if missing (CRITICAL for Deep Linking in Vercel)
+        if (!bot.botInfo) {
+            if (botInfoCache) {
+                bot.botInfo = botInfoCache;
+            } else {
+                try {
+                    console.log("[INFO] Fetching getMe()...");
+                    botInfoCache = await bot.telegram.getMe();
+                    bot.botInfo = botInfoCache;
+                    console.log(`[INFO] Bot username: ${botInfoCache.username}`);
+                } catch (e) {
+                    console.error("Failed to fetch bot info:", e);
+                }
+            }
         }
 
         await bot.handleUpdate(request.body);
