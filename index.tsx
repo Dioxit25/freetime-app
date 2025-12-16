@@ -55,7 +55,6 @@ interface TimeSlot {
 }
 
 // --- LOCALIZATION (I18n) ---
-// (Сокращено для читаемости, переводы те же)
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
@@ -293,6 +292,7 @@ interface AppState {
   createNewGroup: () => void;
   switchGroup: (groupId: number) => void;
   leaveGroup: (groupId: number) => void;
+  forceGroupLoad: (groupId: number) => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -316,7 +316,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const initApp = async () => {
       try {
         addLog("Initializing App...");
-        addLog(`Href: ${window.location.href}`);
         
         let tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
         
@@ -352,11 +351,23 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         setUser(currentUser);
 
         // --- START PARAM PARSING LOGIC ---
+        // Priority 1: Telegram Standard Param (from Deep Link)
         let startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+        
+        // Priority 2: URL Hash Param (Robust fallback for redirects)
         if (!startParam) {
-            // Fallback for direct URL opening or some Android versions
+            const hash = window.location.hash;
+            if (hash.includes('gid=')) {
+                startParam = `gid_${hash.split('gid=')[1].split('&')[0]}`;
+            }
+        }
+
+        // Priority 3: URL Query Param (Standard Web)
+        if (!startParam) {
             const urlParams = new URLSearchParams(window.location.search);
-            startParam = urlParams.get('startapp') || urlParams.get('tgWebAppStartParam');
+            startParam = urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || urlParams.get('gid');
+            // Support direct gid param like ?gid=123
+            if (urlParams.get('gid')) startParam = `gid_${urlParams.get('gid')}`;
         }
 
         addLog(`Start Param: ${startParam || 'None'}`);
@@ -454,6 +465,23 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setIsLoading(false);
   };
 
+  const forceGroupLoad = async (groupId: number) => {
+      if (!user) return;
+      addLog(`FORCE LOAD: ${groupId}`);
+      // Ensure user is member
+      const { error: joinErr } = await supabase.from('group_members').upsert({
+          group_id: groupId,
+          user_id: user.id
+      }, { onConflict: 'group_id, user_id' });
+      
+      if (!joinErr) {
+        await fetchUserGroups(user.id);
+        await loadGroupData(groupId);
+      } else {
+        addLog(`Force Join Error: ${joinErr.message}`);
+      }
+  };
+
   const fetchSlots = async (groupId: number) => {
     const { data } = await supabase.from('slots').select('*').eq('group_id', groupId);
     if (data) {
@@ -519,7 +547,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     <AppContext.Provider value={{ 
         user: user!, group, userGroups, allSlots, mySlots, lang, isLoading, error, logs,
         t, addSlot, removeSlot, refreshData: () => group && fetchSlots(group.id), 
-        createNewGroup, switchGroup, leaveGroup
+        createNewGroup, switchGroup, leaveGroup, forceGroupLoad
     }}>
       {children}
     </AppContext.Provider>
@@ -750,9 +778,10 @@ const SearchScreen = () => {
     );
 };
 const SettingsScreen = () => {
-    const { group, user, t, createNewGroup, leaveGroup, logs } = useContext(AppContext)!;
+    const { group, user, t, createNewGroup, leaveGroup, logs, forceGroupLoad } = useContext(AppContext)!;
     const [copied, setCopied] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
+    const [forceId, setForceId] = useState('');
 
     if (!group) return null;
     const inviteLink = `https://t.me/${BOT_USERNAME}/app?startapp=gid_${group.id}`;
@@ -768,7 +797,7 @@ const SettingsScreen = () => {
             <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6">{group.members.map(m => ( <div key={m.id} className="p-4 border-b border-gray-700 last:border-0 flex items-center gap-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${m.id === user.id ? 'bg-[#3b82f6] text-white' : 'bg-gray-700 text-gray-300'}`}>{m.firstName ? m.firstName[0] : '?'}</div><div className="flex-1"><div className="text-sm">{m.firstName} {m.id === user.id && t('you')}</div><div className="text-[10px] text-gray-500">@{m.username}</div></div></div> ))}</div>
             <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 text-sm font-bold bg-[#27272a] rounded-xl border border-dashed border-gray-700 hover:bg-[#323236] transition"><i className="fa-solid fa-plus mr-2"></i> {t('create_group')}</button>
             <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 text-sm font-bold bg-[#27272a] rounded-xl hover:bg-[#323236] transition">{t('leave_group')}</button>
-            <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.6 (Beta)</div>
+            <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.7 (Beta)</div>
             
             <div className="mt-8 pt-4 border-t border-gray-800 text-center">
                 <button onClick={() => setShowDebug(true)} className="text-xs text-yellow-600 font-mono flex items-center justify-center gap-2 mx-auto">
@@ -782,6 +811,10 @@ const SettingsScreen = () => {
                         <h3 className="text-green-500 font-bold">Debug Console</h3>
                         <button onClick={() => setShowDebug(false)} className="text-white p-2">✕</button>
                     </div>
+                    <div className="mb-4 flex gap-2">
+                        <input type="number" placeholder="Force Group ID (e.g. -100...)" className="flex-1 bg-gray-800 text-white p-2 rounded border border-gray-700" value={forceId} onChange={e => setForceId(e.target.value)} />
+                        <button onClick={() => { if(forceId) forceGroupLoad(parseInt(forceId)); }} className="bg-yellow-600 text-black font-bold px-3 py-2 rounded">Load</button>
+                    </div>
                     {logs.map((l, i) => <div key={i} className="mb-1 border-b border-gray-800 pb-1 text-gray-300">{l}</div>)}
                 </div>
             )}
@@ -792,11 +825,12 @@ const SettingsScreen = () => {
 // --- UPDATED EMPTY STATE WITH DEBUG CONSOLE ---
 
 const EmptyStateScreen = () => {
-    const { createNewGroup, t, logs } = useContext(AppContext)!;
+    const { createNewGroup, t, logs, forceGroupLoad } = useContext(AppContext)!;
     const [showSetup, setShowSetup] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
     const [token, setToken] = useState('');
     const [generatedLink, setGeneratedLink] = useState('');
+    const [forceId, setForceId] = useState('');
 
     const handleAddBot = () => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank');
     const handleGenerate = () => {
@@ -835,6 +869,10 @@ const EmptyStateScreen = () => {
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-green-500 font-bold">Debug Console</h3>
                         <button onClick={() => setShowDebug(false)} className="text-white p-2">✕</button>
+                    </div>
+                    <div className="mb-4 flex gap-2">
+                        <input type="number" placeholder="Force Group ID (e.g. -100...)" className="flex-1 bg-gray-800 text-white p-2 rounded border border-gray-700" value={forceId} onChange={e => setForceId(e.target.value)} />
+                        <button onClick={() => { if(forceId) forceGroupLoad(parseInt(forceId)); }} className="bg-yellow-600 text-black font-bold px-3 py-2 rounded">Load</button>
                     </div>
                     {logs.map((l, i) => <div key={i} className="mb-1 border-b border-gray-800 pb-1 text-gray-300">{l}</div>)}
                 </div>
