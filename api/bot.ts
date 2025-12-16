@@ -27,11 +27,15 @@ bot.command('ping', async (ctx) => {
 bot.start(async (ctx) => {
     console.log(`[CMD] /start from ${ctx.from.id}`);
     const username = ctx.botInfo?.username || 'FreeTimeBot';
-    await ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями, и я создам общий календарь!', 
-        Markup.inlineKeyboard([
-            Markup.button.url('➕ Добавить в группу', `https://t.me/${username}?startgroup=true`)
-        ])
-    );
+    
+    // Using raw JSON for start button as well just to be safe
+    await ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями, и я создам общий календарь!', {
+        reply_markup: {
+            inline_keyboard: [[
+                { text: '➕ Добавить в группу', url: `https://t.me/${username}?startgroup=true` }
+            ]]
+        }
+    });
 });
 
 // --- GROUP LOGIC ---
@@ -97,15 +101,20 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     // 2. Prepare Link
     const webAppUrl = `${WEB_APP_URL}?gid=${chatId}`;
 
-    // 3. Send Reply
+    // 3. Send Reply using RAW JSON for maximum compatibility
     try {
         await ctx.reply(
             `🗓 <b>Календарь для группы "${chatTitle}" готов!</b>\n\nНажмите кнопку, чтобы отметить свое свободное время.`, 
             {
                 parse_mode: 'HTML',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.webApp('🚀 Открыть Календарь', webAppUrl)]
-                ])
+                reply_markup: {
+                    inline_keyboard: [[
+                        { 
+                            text: '🚀 Открыть Календарь', 
+                            web_app: { url: webAppUrl } 
+                        }
+                    ]]
+                }
             }
         );
     } catch (e: any) {
