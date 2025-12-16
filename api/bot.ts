@@ -11,6 +11,8 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 // WEB_APP_URL - это ссылка на ваш деплой Vercel (https://project.vercel.app)
 const WEB_APP_URL = process.env.WEB_APP_URL; 
 
+console.log(`[BOT INIT] Token present: ${!!BOT_TOKEN}, DB URL present: ${!!SUPABASE_URL}, WebApp URL: ${WEB_APP_URL}`);
+
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 
 // Initialize Supabase only if keys are present
@@ -22,10 +24,12 @@ const supabase = (SUPABASE_URL && SUPABASE_KEY)
 
 // 1. Простая проверка, работает ли бот
 bot.command('ping', async (ctx) => {
+    console.log(`[CMD] /ping from ${ctx.from.id}`);
     await ctx.reply('Pong! 🏓 Бот работает и видит сообщения.');
 });
 
 bot.start((ctx) => {
+    console.log(`[CMD] /start from ${ctx.from.id}`);
     ctx.reply('Добро пожаловать в FreeTime! 🗓\nДобавьте меня в группу с друзьями, и я найду время для встречи.', 
         Markup.inlineKeyboard([
             Markup.button.webApp('🚀 Запустить', WEB_APP_URL || 'https://google.com'),
@@ -39,6 +43,7 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
     try {
         const chat = ctx.chat;
         const newStatus = ctx.myChatMember?.new_chat_member?.status;
+        console.log(`[EVENT] Member status change in ${chat.id} (${chat.type}): ${newStatus}`);
 
         // Если бота удалили, игнорируем
         if (newStatus === 'left' || newStatus === 'kicked') return;
@@ -54,6 +59,7 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
 
 // 3. Ручная команда инициализации (если бот уже в группе, но промолчал)
 bot.command('init', async (ctx) => {
+    console.log(`[CMD] /init in ${ctx.chat.id}`);
     if (ctx.chat.type === 'private') {
         return ctx.reply('Эту команду нужно писать внутри группы.');
     }
@@ -63,10 +69,11 @@ bot.command('init', async (ctx) => {
 // Вспомогательная функция регистрации группы
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     if (!supabase) {
+        console.error("[DB ERROR] Supabase not configured");
         return ctx.reply("⚠️ Ошибка: База данных не подключена на сервере.");
     }
 
-    console.log(`Initializing group: ${chatId} - ${chatTitle}`);
+    console.log(`[INIT GROUP] ${chatId} - ${chatTitle}`);
     
     // 1. Сохраняем группу в Supabase
     const { error } = await supabase.from('groups').upsert({
@@ -76,14 +83,18 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     });
 
     if (error) {
-        console.error("Supabase Error:", error);
+        console.error("[DB ERROR]", error);
         return ctx.reply(`⚠️ Ошибка базы данных: ${error.message}`);
     }
 
     // 2. Отвечаем в чат
+    // IMPORTANT: When passing start_param in URL, it usually maps to tgWebAppStartParam in the app
+    const appLink = `${WEB_APP_URL}?startapp=gid_${chatId}`;
+    console.log(`[REPLY] Sending App Link: ${appLink}`);
+
     await ctx.reply(`👋 Привет, ${chatTitle}! Я готов искать свободное время.`, 
         Markup.inlineKeyboard([
-            Markup.button.webApp('📅 Открыть Календарь', `${WEB_APP_URL}?startapp=gid_${chatId}`)
+            Markup.button.webApp('📅 Открыть Календарь', appLink)
         ])
     );
 }
@@ -113,6 +124,7 @@ export default async function handler(request: any, response: any) {
     try {
         const { body } = request;
         if (!body) {
+             console.log("[WARN] Empty body received");
              return response.status(400).json({ error: 'No body provided' });
         }
         await bot.handleUpdate(body);
