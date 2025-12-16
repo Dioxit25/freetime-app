@@ -5,7 +5,6 @@ import { createClient } from '@supabase/supabase-js';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
-const WEB_APP_URL = process.env.WEB_APP_URL; 
 
 // Initial log (Will appear in Vercel Function Logs)
 console.log(`[STARTUP] Token Present: ${!!BOT_TOKEN}`);
