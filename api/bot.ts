@@ -11,10 +11,12 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 // WEB_APP_URL - это ссылка на ваш деплой Vercel (https://project.vercel.app)
 const WEB_APP_URL = process.env.WEB_APP_URL; 
 
-if (!BOT_TOKEN) throw new Error('BOT_TOKEN is missing');
+const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 
-const bot = new Telegraf(BOT_TOKEN);
-const supabase = createClient(SUPABASE_URL!, SUPABASE_KEY!);
+// Initialize Supabase only if keys are present
+const supabase = (SUPABASE_URL && SUPABASE_KEY) 
+    ? createClient(SUPABASE_URL, SUPABASE_KEY) 
+    : null;
 
 // --- ЛОГИКА БОТА ---
 
@@ -60,6 +62,10 @@ bot.command('init', async (ctx) => {
 
 // Вспомогательная функция регистрации группы
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
+    if (!supabase) {
+        return ctx.reply("⚠️ Ошибка: База данных не подключена на сервере.");
+    }
+
     console.log(`Initializing group: ${chatId} - ${chatTitle}`);
     
     // 1. Сохраняем группу в Supabase
@@ -84,12 +90,36 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
 
 // --- VERCEL HANDLER ---
 export default async function handler(request: any, response: any) {
+    // 1. Check for GET request (Browser visit)
+    if (request.method === 'GET') {
+        return response.status(200).send(`
+            <html>
+                <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                    <h1>🤖 Bot is Running</h1>
+                    <p>Status: <strong>Online</strong></p>
+                    <p>Endpoint: <code>/api/bot</code></p>
+                    <p style="color: gray; font-size: 0.9em;">Make sure your Webhook URL points here.</p>
+                </body>
+            </html>
+        `);
+    }
+
+    // 2. Check Configuration
+    if (!BOT_TOKEN) {
+        return response.status(500).json({ error: 'BOT_TOKEN is missing in Environment Variables' });
+    }
+
+    // 3. Handle Telegram Update
     try {
         const { body } = request;
+        if (!body) {
+             return response.status(400).json({ error: 'No body provided' });
+        }
         await bot.handleUpdate(body);
         response.status(200).json({ ok: true });
     } catch (error: any) {
         console.error('Error handling update:', error);
-        response.status(500).json({ error: error.message });
+        // Don't crash Telegram with 500, log it and return 200 so they stop retrying bad updates
+        response.status(200).json({ error: error.message });
     }
 }
