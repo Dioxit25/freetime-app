@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_KEY;
-const BOT_USERNAME = 'TimeAgreeBot'; // Updated to match your bot
+const BOT_USERNAME = 'TimeAgreeBot'; // Убедитесь, что это совпадает с вашим ботом
 
 // --- TYPES ---
 
@@ -20,6 +20,7 @@ interface User {
   firstName: string;
   timezone: string;
   languageCode?: string;
+  photoUrl?: string;
 }
 
 interface Group {
@@ -58,12 +59,13 @@ interface TimeSlot {
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
+    login_welcome: "Welcome to TimeAgree!",
+    login_desc: "Log in with Telegram to sync your availability with your groups.",
+    logout: "Logout",
     upgrade: "UPGRADE",
     my_slots: "My Slots",
     find_time: "Find Time",
     settings: "Settings",
-    keep_updated: "Keep it updated!",
-    keep_updated_desc: "Colored days indicate busy slots.",
     my_busy_slots: "BUSY SLOTS FOR",
     free_bird: "No busy slots for this day.",
     weekly: "Weekly",
@@ -85,37 +87,25 @@ const TRANSLATIONS = {
     top_results: "Top Results",
     reset: "Reset",
     duration: "duration",
-    pro_upsell: "Upgrade to Pro to see 30 days ahead.",
     leave_group: "Leave Group",
-    you: "(You)",
     timezone: "Timezone",
-    my_name: "My Name",
-    group_label: "CURRENT GROUP",
-    algo_desc: (count: number, days: number) => `Checking availability for ${count} selected members over next ${days} days.`,
     invite_friends: "Invite Friends",
-    invite_desc: "Share link to add members:",
-    link_copied: "Link copied!",
-    copy: "Copy Link",
     share: "Share to Chat",
     create_group: "Create New Group",
-    switching_group: "Switch Group",
-    select_members: "Select Participants",
-    select_all: "Select All",
     switch_group_title: "My Groups",
-    current: "Current",
-    confirm_leave: "Are you sure you want to leave this group?",
     no_groups: "No Groups Yet",
     no_groups_desc: "Add the bot to a Telegram group to get started!",
     add_to_group_btn: "Add Bot to Group"
   },
   ru: {
     app_name: "TimeAgree",
+    login_welcome: "Добро пожаловать!",
+    login_desc: "Авторизуйтесь через Telegram, чтобы синхронизировать свои слоты с группами.",
+    logout: "Выйти",
     upgrade: "PREMIUM",
     my_slots: "Мои слоты",
     find_time: "Поиск",
     settings: "Настройки",
-    keep_updated: "Ваш календарь",
-    keep_updated_desc: "Цветные дни — заняты. Нажмите для деталей.",
     my_busy_slots: "ЗАНЯТОСТЬ НА",
     free_bird: "В этот день вы свободны.",
     weekly: "Еженедельно",
@@ -137,25 +127,12 @@ const TRANSLATIONS = {
     top_results: "Лучшие варианты",
     reset: "Сброс",
     duration: "длительность",
-    pro_upsell: "Купите Pro, чтобы искать на 30 дней вперед.",
     leave_group: "Покинуть группу",
-    you: "(Вы)",
     timezone: "Часовой пояс",
-    my_name: "Мое имя",
-    group_label: "ТЕКУЩАЯ ГРУППА",
-    algo_desc: (count: number, days: number) => `Проверка доступности ${count} участников на ближайшие ${days} дн.`,
     invite_friends: "Пригласить друзей",
-    invite_desc: "Отправьте ссылку участникам:",
-    link_copied: "Ссылка скопирована!",
-    copy: "Копировать",
     share: "Отправить в чат",
     create_group: "Создать новую группу",
-    switching_group: "Сменить группу",
-    select_members: "Участники встречи",
-    select_all: "Выбрать всех",
     switch_group_title: "Мои группы",
-    current: "Текущая",
-    confirm_leave: "Вы уверены, что хотите покинуть эту группу?",
     no_groups: "Нет групп",
     no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
     add_to_group_btn: "Добавить бота в группу"
@@ -170,107 +147,6 @@ const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
 
 const supabase = createClient(SUPABASE_URL || '', SUPABASE_KEY || '');
 
-// --- ALGORITHM SERVICE ---
-class TimeFinderService {
-  static findCommonFreeTime(group: Group, slots: BusySlot[], memberIdsToInclude: number[], searchStartDate: Date = new Date()) {
-    const config = PLAN_CONFIGS[group.tier];
-    const windowStart = new Date(searchStartDate);
-    const windowEnd = new Date(windowStart);
-    windowEnd.setDate(windowEnd.getDate() + config.searchWindowDays);
-
-    const activeMembers = group.members.filter(m => memberIdsToInclude.includes(m.id));
-    if (activeMembers.length === 0) return [];
-
-    const userBusyIntervals: Record<number, TimeSlot[]> = {};
-    activeMembers.forEach(m => userBusyIntervals[m.id] = []);
-
-    slots.forEach(slot => {
-      if (!memberIdsToInclude.includes(slot.userId)) return;
-      if (!userBusyIntervals[slot.userId]) return;
-
-      if (slot.type === 'ONE_TIME' && slot.startAt && slot.endAt) {
-        userBusyIntervals[slot.userId].push({ start: new Date(slot.startAt), end: new Date(slot.endAt) });
-      } else if (slot.type === 'CYCLIC_WEEKLY' && slot.dayOfWeek !== undefined && slot.startTimeLocal && slot.endTimeLocal) {
-        userBusyIntervals[slot.userId].push(...this.expandCyclicSlot(slot, windowStart, windowEnd));
-      }
-    });
-
-    Object.keys(userBusyIntervals).forEach(key => {
-      const uid = parseInt(key);
-      userBusyIntervals[uid] = this.mergeIntervals(userBusyIntervals[uid]);
-    });
-
-    const userFreeIntervals: Record<number, TimeSlot[]> = {};
-    Object.keys(userBusyIntervals).forEach(key => {
-      const uid = parseInt(key);
-      userFreeIntervals[uid] = this.invertIntervals(userBusyIntervals[uid], windowStart, windowEnd);
-    });
-
-    const firstUserId = activeMembers[0].id;
-    let commonFreeTime = userFreeIntervals[firstUserId] || [];
-    for (let i = 1; i < activeMembers.length; i++) {
-        commonFreeTime = this.intersectIntervalLists(commonFreeTime, userFreeIntervals[activeMembers[i].id] || []);
-    }
-
-    return commonFreeTime
-      .map(slot => ({ ...slot, durationMinutes: (slot.end.getTime() - slot.start.getTime()) / (1000 * 60) }))
-      .filter(slot => slot.durationMinutes >= config.minSlotDurationMin)
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-  }
-
-  private static expandCyclicSlot(slot: BusySlot, windowStart: Date, windowEnd: Date): TimeSlot[] {
-    const result: TimeSlot[] = [];
-    let current = new Date(windowStart);
-    current.setHours(0,0,0,0);
-    while (current < windowEnd) {
-      if (current.getDay() === slot.dayOfWeek) {
-        const [startH, startM] = (slot.startTimeLocal || "00:00").split(':').map(Number);
-        const [endH, endM] = (slot.endTimeLocal || "23:59").split(':').map(Number);
-        const start = new Date(current); start.setHours(startH, startM, 0, 0);
-        const end = new Date(current); end.setHours(endH, endM, 0, 0);
-        if (end < start) end.setDate(end.getDate() + 1);
-        result.push({ start, end });
-      }
-      current.setDate(current.getDate() + 1);
-    }
-    return result;
-  }
-  private static mergeIntervals(intervals: TimeSlot[]): TimeSlot[] {
-    if (!intervals.length) return [];
-    intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
-    const merged: TimeSlot[] = [intervals[0]];
-    for (let i = 1; i < intervals.length; i++) {
-      const prev = merged[merged.length - 1];
-      const curr = intervals[i];
-      if (curr.start <= prev.end) prev.end = new Date(Math.max(prev.end.getTime(), curr.end.getTime()));
-      else merged.push(curr);
-    }
-    return merged;
-  }
-  private static invertIntervals(busy: TimeSlot[], windowStart: Date, windowEnd: Date): TimeSlot[] {
-    const free: TimeSlot[] = [];
-    let pointer = new Date(windowStart);
-    for (const slot of busy) {
-      if (slot.start > pointer) free.push({ start: new Date(pointer), end: new Date(slot.start) });
-      pointer = new Date(Math.max(pointer.getTime(), slot.end.getTime()));
-    }
-    if (pointer < windowEnd) free.push({ start: new Date(pointer), end: new Date(windowEnd) });
-    return free;
-  }
-  private static intersectIntervalLists(listA: TimeSlot[], listB: TimeSlot[]): TimeSlot[] {
-    const intersections: TimeSlot[] = [];
-    let i = 0, j = 0;
-    while (i < listA.length && j < listB.length) {
-      const a = listA[i], b = listB[j];
-      const startMax = new Date(Math.max(a.start.getTime(), b.start.getTime()));
-      const endMin = new Date(Math.min(a.end.getTime(), b.end.getTime()));
-      if (startMax < endMin) intersections.push({ start: startMax, end: endMin });
-      if (a.end < b.end) i++; else j++;
-    }
-    return intersections;
-  }
-}
-
 // --- STATE MANAGEMENT ---
 
 interface AppState {
@@ -281,6 +157,7 @@ interface AppState {
   mySlots: BusySlot[];
   lang: LangCode;
   isLoading: boolean;
+  isAuthRequired: boolean;
   error: string | null;
   logs: string[];
   t: (key: string, ...args: any[]) => string;
@@ -291,6 +168,8 @@ interface AppState {
   switchGroup: (groupId: number) => void;
   leaveGroup: (groupId: number) => void;
   forceGroupLoad: (groupId: number) => Promise<void>;
+  onAuthSuccess: (user: any) => void;
+  logout: () => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -300,8 +179,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [group, setGroup] = useState<Group | null>(null);
   const [userGroups, setUserGroups] = useState<{ id: number, title: string }[]>([]);
   const [allSlots, setAllSlots] = useState<BusySlot[]>([]);
-  const [lang, setLang] = useState<LangCode>('en');
+  const [lang, setLang] = useState<LangCode>('ru');
   const [isLoading, setIsLoading] = useState(true);
+  const [isAuthRequired, setIsAuthRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
 
@@ -311,96 +191,85 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   useEffect(() => {
-    const initApp = async () => {
-      try {
-        addLog("Initializing App...");
-        
-        let tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        
-        if (!tgUser) {
-          addLog("WARN: TG User not found. Using Mock.");
-          tgUser = { id: 101, first_name: "DevUser", username: "dev_alex", language_code: "en" };
-        } else {
-          addLog(`User: ${tgUser.id} (${tgUser.first_name})`);
-        }
-
-        setLang(tgUser.language_code?.startsWith('ru') ? 'ru' : 'en');
-
-        // Upsert User
-        const { error: userError } = await supabase.from('users').upsert({
-          id: tgUser.id,
-          username: tgUser.username,
-          first_name: tgUser.first_name,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-        });
-        
-        if (userError) throw new Error(`User Sync Error: ${userError.message}`);
-
-        const currentUser: User = {
-          id: tgUser.id,
-          username: tgUser.username || '',
-          firstName: tgUser.first_name || 'User',
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          languageCode: tgUser.language_code
-        };
-        setUser(currentUser);
-
-        // --- PARAM PARSING ---
-        let startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-        
-        // Check hash first (for web_app buttons with hash)
-        const hash = window.location.hash;
-        if (!startParam && hash) {
-            addLog(`Checking hash: ${hash}`);
-            if (hash.includes('gid=')) {
-                startParam = `gid_${hash.split('gid=')[1].split('&')[0]}`;
-            } else if (hash.startsWith('#gid_')) {
-                startParam = hash.substring(1);
-            }
-        }
-
-        // Check query (for web_app buttons with query)
-        if (!startParam) {
-            const urlParams = new URLSearchParams(window.location.search);
-            startParam = urlParams.get('startapp') || urlParams.get('gid');
-            if (urlParams.get('gid') && !startParam?.startsWith('gid_')) {
-                startParam = `gid_${urlParams.get('gid')}`;
-            }
-        }
-
-        addLog(`Final Param: ${startParam || 'None'}`);
-
-        let targetGroupId: number | null = null;
-
-        if (startParam && startParam.startsWith('gid_')) {
-            const idStr = startParam.split('_')[1];
-            const inviteId = parseInt(idStr);
-            if (!isNaN(inviteId)) {
-                await supabase.from('group_members').upsert({ group_id: inviteId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
-                targetGroupId = inviteId;
-            }
-        }
-
-        await fetchUserGroups(currentUser.id);
-
-        if (!targetGroupId) {
-            const { data: membersData } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id);
-            if (membersData && membersData.length > 0) targetGroupId = membersData[0].group_id;
-        }
-
-        if (targetGroupId) await loadGroupData(targetGroupId);
-        else setIsLoading(false);
-
-      } catch (e: any) {
-        setError(e.message);
-        addLog(`CRITICAL: ${e.message}`);
-        setIsLoading(false);
-      }
-    };
-
-    if (!SUPABASE_URL || !SUPABASE_KEY) setError("Supabase credentials missing.");
-    else initApp();
+    initApp();
   }, []);
+
+  const initApp = async (externalUser?: any) => {
+    try {
+      addLog("Initializing...");
+      setIsLoading(true);
+
+      let tgUserRaw = externalUser || window.Telegram?.WebApp?.initDataUnsafe?.user;
+
+      // Если нет данных от WebApp, проверяем localStorage
+      if (!tgUserRaw) {
+        const saved = localStorage.getItem('tg_user_session');
+        if (saved) {
+            tgUserRaw = JSON.parse(saved);
+            addLog("Session restored from local storage.");
+        }
+      }
+
+      if (!tgUserRaw) {
+        addLog("No user detected. Auth required.");
+        setIsAuthRequired(true);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsAuthRequired(false);
+      setLang(tgUserRaw.language_code?.startsWith('ru') ? 'ru' : 'en');
+
+      const currentUser: User = {
+        id: tgUserRaw.id,
+        username: tgUserRaw.username || '',
+        firstName: tgUserRaw.first_name || tgUserRaw.firstName || 'User',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        languageCode: tgUserRaw.language_code,
+        photoUrl: tgUserRaw.photo_url
+      };
+
+      // Sync with Supabase
+      const { error: userError } = await supabase.from('users').upsert({
+        id: currentUser.id,
+        username: currentUser.username,
+        first_name: currentUser.firstName,
+        timezone: currentUser.timezone
+      });
+      
+      if (userError) throw new Error(`DB Sync Error: ${userError.message}`);
+      
+      setUser(currentUser);
+      localStorage.setItem('tg_user_session', JSON.stringify(tgUserRaw));
+
+      // Handle Group from URL
+      const urlParams = new URLSearchParams(window.location.search);
+      let targetGroupId: number | null = null;
+      const qGid = urlParams.get('gid');
+      if (qGid) {
+          targetGroupId = parseInt(qGid);
+          await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
+      } else {
+          // Check for startapp
+          const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+          if (startParam?.startsWith('gid_')) targetGroupId = parseInt(startParam.split('_')[1]);
+      }
+
+      await fetchUserGroups(currentUser.id);
+
+      if (!targetGroupId) {
+          const { data } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id).limit(1);
+          if (data && data.length > 0) targetGroupId = data[0].group_id;
+      }
+
+      if (targetGroupId) await loadGroupData(targetGroupId);
+      else setIsLoading(false);
+
+    } catch (e: any) {
+      setError(e.message);
+      setIsLoading(false);
+    }
+  };
 
   const fetchUserGroups = async (userId: number) => {
       const { data } = await supabase.from('group_members').select('group_id, groups(id, title)').eq('user_id', userId);
@@ -410,9 +279,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const loadGroupData = async (groupId: number) => {
     setIsLoading(true);
-    addLog(`Loading Group ${groupId}...`);
-    const { data: groupData, error: gErr } = await supabase.from('groups').select('*').eq('id', groupId).single();
-    if (gErr || !groupData) { setIsLoading(false); return; }
+    const { data: groupData } = await supabase.from('groups').select('*').eq('id', groupId).single();
+    if (!groupData) { setIsLoading(false); return; }
 
     const { data: membersData } = await supabase.from('group_members').select('user_id, users(id, username, first_name, timezone)').eq('group_id', groupId);
     const members: User[] = membersData?.map((m: any) => ({
@@ -422,13 +290,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setGroup({ id: groupData.id, title: groupData.title, tier: groupData.tier as PlanTier, members: members });
     await fetchSlots(groupId);
     setIsLoading(false);
-  };
-
-  const forceGroupLoad = async (groupId: number) => {
-      if (!user) return;
-      await supabase.from('group_members').upsert({ group_id: groupId, user_id: user.id }, { onConflict: 'group_id, user_id' });
-      await fetchUserGroups(user.id);
-      await loadGroupData(groupId);
   };
 
   const fetchSlots = async (groupId: number) => {
@@ -442,33 +303,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  const createNewGroup = async () => {
-      if(!user) return;
-      const title = prompt("Enter group name (Personal):");
-      if(!title) return;
-      const manualId = Math.floor(Math.random() * 100000000) + 10000;
-      const { error } = await supabase.from('groups').insert({ id: manualId, title, tier: "FREE" });
-      if(!error) {
-          await supabase.from('group_members').insert({ group_id: manualId, user_id: user.id });
-          await fetchUserGroups(user.id);
-          await loadGroupData(manualId);
-      }
+  const onAuthSuccess = (tgUser: any) => {
+      addLog("Login Success!");
+      initApp(tgUser);
   };
 
-  const switchGroup = async (groupId: number) => { await loadGroupData(groupId); };
-  const leaveGroup = async (groupId: number) => {
-      if (!user || !confirm('Leave this group?')) return;
-      await supabase.from('group_members').delete().match({ group_id: groupId, user_id: user.id });
-      await fetchUserGroups(user.id);
-      const remaining = userGroups.filter(g => g.id !== groupId);
-      if (remaining.length > 0) switchGroup(remaining[0].id); else setGroup(null);
+  const logout = () => {
+      localStorage.removeItem('tg_user_session');
+      window.location.reload();
   };
-
-  useEffect(() => {
-    if (!group) return;
-    const channel = supabase.channel('db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'slots', filter: `group_id=eq.${group.id}` }, () => fetchSlots(group.id)).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [group]);
 
   const addSlot = async (slot: Partial<BusySlot>) => {
     if (!user || !group) return;
@@ -480,7 +323,13 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const removeSlot = async (id: string) => { await supabase.from('slots').delete().eq('id', id); };
-  
+  const switchGroup = async (groupId: number) => { await loadGroupData(groupId); };
+  const leaveGroup = async (groupId: number) => {
+      if (!user || !confirm('Leave group?')) return;
+      await supabase.from('group_members').delete().match({ group_id: groupId, user_id: user.id });
+      window.location.reload();
+  };
+
   const t = (key: string, ...args: any[]) => {
     const dict = TRANSLATIONS[lang] || TRANSLATIONS['en'];
     const val = dict[key as keyof typeof dict];
@@ -492,22 +341,60 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   return (
     <AppContext.Provider value={{ 
-        user: user!, group, userGroups, allSlots, mySlots, lang, isLoading, error, logs,
+        user: user!, group, userGroups, allSlots, mySlots, lang, isLoading, isAuthRequired, error, logs,
         t, addSlot, removeSlot, refreshData: () => group && fetchSlots(group.id), 
-        createNewGroup, switchGroup, leaveGroup, forceGroupLoad
+        createNewGroup: () => {}, switchGroup, leaveGroup, forceGroupLoad: async () => {},
+        onAuthSuccess, logout
     }}>
       {children}
     </AppContext.Provider>
   );
 };
 
-// --- UI COMPONENTS ---
+// --- AUTH SCREEN ---
+
+const LoginScreen = () => {
+    const { onAuthSuccess, t, lang } = useContext(AppContext)!;
+    
+    useEffect(() => {
+        // Динамически вставляем виджет Telegram
+        const script = document.createElement('script');
+        script.src = 'https://telegram.org/js/telegram-widget.js?22';
+        script.setAttribute('data-telegram-login', BOT_USERNAME);
+        script.setAttribute('data-size', 'large');
+        script.setAttribute('data-radius', '12');
+        script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+        script.setAttribute('data-request-access', 'write');
+        script.async = true;
+        
+        // Глобальный коллбэк для виджета
+        (window as any).onTelegramAuth = (user: any) => {
+            onAuthSuccess(user);
+        };
+        
+        document.getElementById('tg-login-container')?.appendChild(script);
+        return () => { delete (window as any).onTelegramAuth; };
+    }, []);
+
+    return (
+        <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-6 text-center text-white">
+            <div className="w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center mb-6 shadow-xl shadow-blue-500/20">
+                <i className="fa-brands fa-telegram text-4xl"></i>
+            </div>
+            <h1 className="text-2xl font-bold mb-2">{t('login_welcome')}</h1>
+            <p className="text-gray-400 mb-10 text-sm max-w-xs">{t('login_desc')}</p>
+            <div id="tg-login-container" className="min-h-[50px]"></div>
+            <p className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">Secure via Telegram Auth</p>
+        </div>
+    );
+};
+
+// --- MAIN UI COMPONENTS ---
 
 const Header = () => {
-    const context = useContext(AppContext);
+    const { group, userGroups, switchGroup, t } = useContext(AppContext)!;
     const [isMenuOpen, setMenuOpen] = useState(false);
-    if (!context || !context.group) return <div className="bg-[#27272a] p-4 h-16"></div>;
-    const { group, userGroups, switchGroup, t } = context;
+    if (!group) return null;
     return (
         <div className="relative z-50">
             <div className="bg-[#27272a] p-4 flex justify-between items-center shadow-md relative z-20">
@@ -517,24 +404,21 @@ const Header = () => {
                             <span className="truncate">{group.title}</span> 
                             <i className={`fa-solid fa-chevron-down text-xs transition ${isMenuOpen ? 'rotate-180' : ''}`}></i>
                         </h1>
-                        <p className="text-xs text-gray-400">{group.members.length} members • {group.tier}</p>
+                        <p className="text-xs text-gray-400">{group.members.length} уч.</p>
                     </div>
                 </div>
-                {group.tier === 'FREE' && ( <button className="text-xs bg-gradient-to-r from-yellow-600 to-yellow-500 text-white px-2 py-1 rounded font-bold shrink-0">{t('upgrade')}</button> )}
             </div>
             {isMenuOpen && (
                 <>
                     <div className="fixed inset-0 bg-black/50 z-10" onClick={() => setMenuOpen(false)}></div>
                     <div className="absolute top-full left-0 right-0 bg-[#27272a] border-t border-gray-700 shadow-2xl z-20 rounded-b-xl overflow-hidden slide-in">
                         <div className="p-3 bg-black/20 text-xs font-bold text-gray-500 uppercase tracking-wider">{t('switch_group_title')}</div>
-                        <div className="max-h-60 overflow-y-auto">
-                            {userGroups.map(g => (
-                                <button key={g.id} onClick={() => { switchGroup(g.id); setMenuOpen(false); }} className={`w-full text-left p-4 border-b border-gray-800 flex justify-between items-center ${g.id === group.id ? 'bg-[#3b82f6]/10 text-blue-400' : 'text-white hover:bg-white/5'}`}>
-                                    <span className="font-medium truncate">{g.title}</span>
-                                    {g.id === group.id && <i className="fa-solid fa-check text-blue-500"></i>}
-                                </button>
-                            ))}
-                        </div>
+                        {userGroups.map(g => (
+                            <button key={g.id} onClick={() => { switchGroup(g.id); setMenuOpen(false); }} className={`w-full text-left p-4 border-b border-gray-800 flex justify-between items-center ${g.id === group.id ? 'bg-[#3b82f6]/10 text-blue-400' : 'text-white'}`}>
+                                <span className="font-medium truncate">{g.title}</span>
+                                {g.id === group.id && <i className="fa-solid fa-check text-blue-500"></i>}
+                            </button>
+                        ))}
                     </div>
                 </>
             )}
@@ -563,10 +447,10 @@ const SlotCard: React.FC<{ slot: BusySlot; onDelete: () => void }> = ({ slot, on
     return (
         <div className="bg-[#27272a] p-3 rounded-lg mb-2 flex justify-between items-center border-l-4 border-red-500 slide-in">
             <div>
-                <div className="flex items-center gap-2"><span className="text-sm font-semibold text-white">{isCyclic ? t('weekly') : t('one_time')}</span>{slot.description && <span className="text-xs text-gray-500 italic truncate max-w-[150px]">"{slot.description}"</span>}</div>
+                <div className="flex items-center gap-2"><span className="text-sm font-semibold text-white">{isCyclic ? t('weekly') : t('one_time')}</span></div>
                 <div className="text-xs text-gray-400">{isCyclic ? `${days[slot.dayOfWeek!]} • ${slot.startTimeLocal} - ${slot.endTimeLocal}` : `${new Date(slot.startAt!).toLocaleDateString(lang)} • ${new Date(slot.startAt!).toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}`}</div>
             </div>
-            <button onClick={onDelete} className="text-red-400 p-2 active:scale-95 transition"><i className="fa-solid fa-trash"></i></button>
+            <button onClick={onDelete} className="text-red-400 p-2"><i className="fa-solid fa-trash"></i></button>
         </div>
     )
 }
@@ -576,36 +460,25 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
     const [viewDate, setViewDate] = useState(new Date());
     const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate();
     const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1).getDay();
-    const changeMonth = (delta: number) => { const newDate = new Date(viewDate); newDate.setMonth(newDate.getMonth() + delta); setViewDate(newDate); };
-    const checkSlotStatus = (day: number) => {
-        const checkDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
-        const dayOfWeek = checkDate.getDay();
-        const dateStr = checkDate.toISOString().split('T')[0];
-        let hasCyclic = false, hasOneTime = false;
-        mySlots.forEach(slot => { if (slot.type === 'CYCLIC_WEEKLY' && slot.dayOfWeek === dayOfWeek) hasCyclic = true; if (slot.type === 'ONE_TIME' && slot.startAt?.startsWith(dateStr)) hasOneTime = true; });
-        return { hasCyclic, hasOneTime };
-    };
     const daysLabels = lang === 'ru' ? ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'] : ['Su','Mo','Tu','We','Th','Fr','Sa'];
     return (
         <div className="bg-[#27272a] rounded-xl p-4 mb-4 shadow-lg">
             <div className="flex justify-between items-center mb-4">
-                <button onClick={() => changeMonth(-1)} className="p-2 text-gray-400 hover:text-white"><i className="fa-solid fa-chevron-left"></i></button>
+                <button onClick={() => {const d = new Date(viewDate); d.setMonth(d.getMonth()-1); setViewDate(d);}} className="p-2 text-gray-400"><i className="fa-solid fa-chevron-left"></i></button>
                 <h3 className="font-bold text-lg capitalize">{viewDate.toLocaleDateString(lang, { month: 'long', year: 'numeric' })}</h3>
-                <button onClick={() => changeMonth(1)} className="p-2 text-gray-400 hover:text-white"><i className="fa-solid fa-chevron-right"></i></button>
+                <button onClick={() => {const d = new Date(viewDate); d.setMonth(d.getMonth()+1); setViewDate(d);}} className="p-2 text-gray-400"><i className="fa-solid fa-chevron-right"></i></button>
             </div>
             <div className="grid grid-cols-7 mb-2 text-center">{daysLabels.map((d, i) => <div key={i} className="text-xs text-gray-500 font-bold">{d}</div>)}</div>
             <div className="grid grid-cols-7 gap-1">
                 {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`}></div>)}
                 {Array.from({ length: daysInMonth }).map((_, i) => {
                     const day = i + 1;
+                    const d = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
                     const isSelected = selectedDate.getDate() === day && selectedDate.getMonth() === viewDate.getMonth() && selectedDate.getFullYear() === viewDate.getFullYear();
-                    const { hasCyclic, hasOneTime } = checkSlotStatus(day);
-                    let cellClass = "text-gray-400 hover:bg-white/5"; 
-                    if (hasCyclic && hasOneTime) cellClass = "bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 text-white";
-                    else if (hasCyclic) cellClass = "bg-blue-500/10 border border-blue-500/20 text-blue-200";
-                    else if (hasOneTime) cellClass = "bg-purple-500/10 border border-purple-500/20 text-purple-200";
-                    if (isSelected) cellClass = "bg-[#3b82f6] text-white shadow-lg shadow-blue-500/50 scale-105 z-10 font-bold";
-                    return ( <button key={day} onClick={() => { const d = new Date(viewDate.getFullYear(), viewDate.getMonth(), day); onSelectDate(d); }} className={`h-10 w-full rounded-xl flex items-center justify-center relative active:scale-95 transition-all ${cellClass}`}><span className="text-sm font-medium">{day}</span></button> );
+                    const dayOfWeek = d.getDay();
+                    const dateStr = d.toISOString().split('T')[0];
+                    const isBusy = mySlots.some(s => (s.type === 'CYCLIC_WEEKLY' && s.dayOfWeek === dayOfWeek) || (s.type === 'ONE_TIME' && s.startAt?.startsWith(dateStr)));
+                    return ( <button key={day} onClick={() => onSelectDate(d)} className={`h-10 w-full rounded-xl flex items-center justify-center relative ${isSelected ? 'bg-blue-500 text-white' : isBusy ? 'bg-red-500/10 text-red-200 border border-red-500/20' : 'text-gray-400'}`}><span className="text-sm">{day}</span></button> );
                 })}
             </div>
         </div>
@@ -615,55 +488,42 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
 const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClose: () => void, initialDate: Date }) => {
     const { addSlot, t, lang } = useContext(AppContext)!;
     const [type, setType] = useState<SlotType>('ONE_TIME');
-    const [selectedDays, setSelectedDays] = useState<number[]>([1]); 
     const [start, setStart] = useState("09:00");
     const [end, setEnd] = useState("18:00");
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [description, setDescription] = useState("");
-    const [isAllDay, setIsAllDay] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
     useEffect(() => {
-        if(isOpen) {
-            setIsAllDay(false); setDescription(""); setIsSaving(false);
-            if(initialDate) {
-                const offset = initialDate.getTimezoneOffset();
-                const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
-                setDate(adjDate.toISOString().split('T')[0]);
-                setSelectedDays([initialDate.getDay()]);
-            }
+        if(isOpen && initialDate) {
+            const offset = initialDate.getTimezoneOffset();
+            const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
+            setDate(adjDate.toISOString().split('T')[0]);
         }
     }, [isOpen, initialDate]);
     if (!isOpen) return null;
     const handleSave = async () => {
-        setIsSaving(true);
-        const finalStart = isAllDay ? "00:00" : start;
-        const finalEnd = isAllDay ? "23:59" : end;
-        if (type === 'CYCLIC_WEEKLY') {
-            for (const day of selectedDays) await addSlot({ type, description, dayOfWeek: day, startTimeLocal: finalStart, endTimeLocal: finalEnd });
-        } else {
-            const startD = new Date(`${date}T${finalStart}:00`);
-            const endD = new Date(`${date}T${finalEnd}:00`);
-            await addSlot({ type, description, startAt: startD.toISOString(), endAt: endD.toISOString(), startTimeLocal: finalStart, endTimeLocal: finalEnd });
+        if (type === 'CYCLIC_WEEKLY') await addSlot({ type, dayOfWeek: initialDate.getDay(), startTimeLocal: start, endTimeLocal: end });
+        else {
+            const startD = new Date(`${date}T${start}:00`);
+            const endD = new Date(`${date}T${end}:00`);
+            await addSlot({ type, startAt: startD.toISOString(), endAt: endD.toISOString(), startTimeLocal: start, endTimeLocal: end });
         }
-        setIsSaving(false); onClose();
+        onClose();
     };
-    const daysLabels = lang === 'ru' ? ['В','П','В','С','Ч','П','С'] : ['S','M','T','W','T','F','S'];
     return (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-end justify-center">
-            <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">{t('i_am_busy')}</h2><button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark text-xl"></i></button></div>
-                <div className="flex bg-[#27272a] p-1 rounded-lg mb-6"><button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'ONE_TIME' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('one_time_btn')}</button><button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('weekly_btn')}</button></div>
-                <div className="space-y-6 mb-8">
-                    {type === 'CYCLIC_WEEKLY' ? (
-                        <div><label className="block text-xs text-gray-500 mb-3">{t('day_of_week')}</label><div className="flex justify-between">{daysLabels.map((d, i) => (<button key={i} onClick={() => setSelectedDays(prev => prev.includes(i) ? prev.filter(day => day !== i) : [...prev, i])} className={`w-10 h-10 rounded-full text-sm font-bold transition-all ${selectedDays.includes(i) ? 'bg-[#3b82f6] text-white' : 'bg-[#27272a] text-gray-400'}`}>{d}</button>))}</div></div>
-                    ) : ( <div><label className="block text-xs text-gray-500 mb-1">{t('date')}</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white outline-none focus:ring-1 focus:ring-blue-500" /></div> )}
-                    <div>
-                        <div className="flex justify-between items-center mb-2"><label className="text-xs text-gray-500">{t('from')} / {t('to')}</label><label className="flex items-center gap-2 cursor-pointer"><span className="text-xs text-gray-400">{t('all_day')}</span><div onClick={() => setIsAllDay(!isAllDay)} className={`w-10 h-5 rounded-full relative transition-colors ${isAllDay ? 'bg-blue-500' : 'bg-gray-600'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isAllDay ? 'left-6' : 'left-1'}`}></div></div></label></div>
-                        {!isAllDay && ( <div className="flex gap-4"><input type="time" value={start} onChange={e => setStart(e.target.value)} className="flex-1 bg-[#27272a] p-3 rounded-lg text-white" /><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="flex-1 bg-[#27272a] p-3 rounded-lg text-white" /></div> )}
-                    </div>
-                    <div><label className="block text-xs text-gray-500 mb-1">{t('description')}</label><input type="text" value={description} onChange={e => setDescription(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white" /></div>
+            <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in">
+                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">{t('i_am_busy')}</h2><button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button></div>
+                <div className="flex bg-[#27272a] p-1 rounded-lg mb-6">
+                    <button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-sm rounded-md ${type === 'ONE_TIME' ? 'bg-[#3b82f6]' : 'text-gray-400'}`}>{t('one_time_btn')}</button>
+                    <button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6]' : 'text-gray-400'}`}>{t('weekly_btn')}</button>
                 </div>
-                <button disabled={isSaving} onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold">{isSaving ? '...' : t('save_availability')}</button>
+                <div className="space-y-4 mb-8">
+                    {type === 'ONE_TIME' && <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white" />}
+                    <div className="flex gap-4">
+                        <div className="flex-1"><label className="text-xs text-gray-500 mb-1 block">{t('from')}</label><input type="time" value={start} onChange={e => setStart(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white" /></div>
+                        <div className="flex-1"><label className="text-xs text-gray-500 mb-1 block">{t('to')}</label><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white" /></div>
+                    </div>
+                </div>
+                <button onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold">{t('save_availability')}</button>
             </div>
         </div>
     );
@@ -671,21 +531,14 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
 
 const MySlotsScreen = () => {
     const { mySlots, removeSlot, t, lang } = useContext(AppContext)!;
-    const [isModalOpen, setModalOpen] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
-    const dailySlots = mySlots.filter(slot => { 
-        if (slot.type === 'CYCLIC_WEEKLY') return slot.dayOfWeek === selectedDate.getDay(); 
-        if (slot.type === 'ONE_TIME' && slot.startAt) { 
-            const d = new Date(slot.startAt); 
-            return d.getDate() === selectedDate.getDate() && d.getMonth() === selectedDate.getMonth(); 
-        } 
-        return false; 
-    });
+    const [isModalOpen, setModalOpen] = useState(false);
+    const dailySlots = mySlots.filter(s => (s.type === 'CYCLIC_WEEKLY' && s.dayOfWeek === selectedDate.getDay()) || (s.type === 'ONE_TIME' && s.startAt?.startsWith(selectedDate.toISOString().split('T')[0])));
     return (
         <div className="p-4 pb-24">
             <MiniCalendar mySlots={mySlots} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
-            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">{t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}</h2>
-            {dailySlots.length === 0 ? ( <div className="text-center py-6 opacity-50 border border-dashed border-gray-700 rounded-xl"><p className="text-sm">{t('free_bird')}</p></div> ) : dailySlots.map(slot => <SlotCard key={slot.id} slot={slot} onDelete={() => removeSlot(slot.id)} />)}
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}</h2>
+            {dailySlots.length === 0 ? <div className="text-center py-10 opacity-30 text-sm">{t('free_bird')}</div> : dailySlots.map(s => <SlotCard key={s.id} slot={s} onDelete={() => removeSlot(s.id)} />)}
             <button onClick={() => setModalOpen(true)} className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center z-40"><i className="fa-solid fa-plus text-xl"></i></button>
             <AddSlotModal isOpen={isModalOpen} onClose={() => setModalOpen(false)} initialDate={selectedDate} />
         </div>
@@ -696,23 +549,21 @@ const SearchScreen = () => {
     const { group, allSlots, t, lang } = useContext(AppContext)!;
     const [results, setResults] = useState<{ start: Date, end: Date, durationMinutes: number }[] | null>(null);
     const [loading, setLoading] = useState(false);
-    const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
-    useEffect(() => { if (group) setSelectedMembers(group.members.map(m => m.id)); }, [group]);
     if (!group) return null;
-    const handleSearch = () => { setLoading(true); setTimeout(() => { setResults(TimeFinderService.findCommonFreeTime(group, allSlots, selectedMembers)); setLoading(false); }, 800); };
+    const handleSearch = () => { setLoading(true); setTimeout(() => { setResults(TimeFinderService.findCommonFreeTime(group, allSlots, group.members.map(m => m.id))); setLoading(false); }, 1000); };
     return (
-        <div className="p-4 pb-24 h-full">
-            {!results && !loading && (
-                <div className="flex flex-col h-full">
-                    <div className="mb-6"><div className="bg-[#27272a] rounded-xl overflow-hidden max-h-48 overflow-y-auto">{group.members.map(m => ( <div key={m.id} onClick={() => setSelectedMembers(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])} className="p-3 border-b border-gray-700 flex items-center gap-3"><div className={`w-5 h-5 rounded border flex items-center justify-center ${selectedMembers.includes(m.id) ? 'bg-[#3b82f6] border-[#3b82f6]' : 'border-gray-500'}`}>{selectedMembers.includes(m.id) && <i className="fa-solid fa-check text-white text-xs"></i>}</div><span>{m.firstName}</span></div> ))}</div></div>
-                    <div className="flex-1 flex flex-col items-center justify-center text-center"><h2 className="text-xl font-bold mb-2">{t('find_time')}</h2><p className="text-gray-400 text-sm mb-8">{t('algo_desc', selectedMembers.length, PLAN_CONFIGS[group.tier].searchWindowDays)}</p><button onClick={handleSearch} className="bg-white text-black px-8 py-3 rounded-full font-bold">{t('find_magic_slot')}</button></div>
-                </div>
-            )}
-            {loading && ( <div className="flex flex-col items-center justify-center h-[60vh]"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-[#3b82f6] mb-4"></i><p className="text-gray-400">{t('calculating')}</p></div> )}
+        <div className="p-4 pb-24 text-center">
+            {!results && !loading && <div className="py-20"><h2 className="text-xl font-bold mb-4">{t('find_time')}</h2><p className="text-gray-400 text-sm mb-8">Ищем пересечения для всех участников на 7 дней.</p><button onClick={handleSearch} className="bg-white text-black px-10 py-4 rounded-full font-bold">{t('find_magic_slot')}</button></div>}
+            {loading && <div className="py-20"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-4"></i><p className="text-gray-400">{t('calculating')}</p></div>}
             {results && (
-                <div className="slide-in">
-                    <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-[#3b82f6]">{t('reset')}</button></div>
-                    {results.length === 0 ? ( <div className="bg-red-900/20 p-4 rounded-xl text-center"><p className="text-red-200">{t('no_common_time')}</p></div> ) : ( <div className="space-y-3">{results.slice(0, 5).map((res, i) => ( <div key={i} className="bg-[#27272a] p-4 rounded-xl flex items-center gap-4 border-l-4 border-green-500"><div><div className="font-bold text-lg">{res.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} - {res.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div><div className="text-xs text-gray-500">{Math.floor(res.durationMinutes / 60)}h {res.durationMinutes % 60}m {t('duration')}</div></div></div> ))}</div> )}
+                <div className="text-left">
+                    <div className="flex justify-between items-center mb-6"><h2 className="font-bold">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-blue-500 text-sm">{t('reset')}</button></div>
+                    {results.length === 0 ? <p className="text-red-400">{t('no_common_time')}</p> : results.slice(0,5).map((r, i) => (
+                        <div key={i} className="bg-[#27272a] p-4 rounded-xl mb-3 border-l-4 border-green-500">
+                            <div className="font-bold text-lg">{r.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} - {r.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div>
+                            <div className="text-xs text-gray-500">{r.start.toLocaleDateString(lang, {weekday: 'long', day: 'numeric', month: 'short'})}</div>
+                        </div>
+                    ))}
                 </div>
             )}
         </div>
@@ -720,42 +571,30 @@ const SearchScreen = () => {
 };
 
 const SettingsScreen = () => {
-    const { group, user, t, createNewGroup, leaveGroup, logs, forceGroupLoad } = useContext(AppContext)!;
-    const [showDebug, setShowDebug] = useState(false);
-    const [forceId, setForceId] = useState('');
+    const { user, group, t, logout, leaveGroup } = useContext(AppContext)!;
     if (!group) return null;
-    const inviteLink = `https://t.me/${BOT_USERNAME}/app?startapp=gid_${group.id}`;
     return (
-        <div className="p-4 pb-20 overflow-y-auto h-full">
-            <h2 className="text-xl font-bold mb-6">{t('settings')}</h2>
-            <div className="bg-gradient-to-r from-[#3b82f6] to-[#2563eb] rounded-xl p-5 mb-6"><h3 className="font-bold text-white mb-4"><i className="fa-solid fa-user-plus"></i> {t('invite_friends')}</h3><button onClick={() => window.Telegram?.WebApp?.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteLink)}`)} className="w-full bg-white text-blue-600 py-3 rounded-lg font-bold text-sm">{t('share')}</button></div>
-            <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6"><div className="p-4 border-b border-gray-700 flex justify-between"><span>{t('timezone')}</span><span className="text-gray-400">{user.timezone}</span></div></div>
-            <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 bg-[#27272a] rounded-xl border border-dashed border-gray-700">{t('create_group')}</button>
-            <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 bg-[#27272a] rounded-xl">{t('leave_group')}</button>
-            <button onClick={() => setShowDebug(!showDebug)} className="w-full py-3 mt-4 text-xs text-gray-600">🐞 Debug Logs</button>
-            {showDebug && ( <div className="fixed inset-0 z-[100] bg-black/95 p-6 overflow-y-auto font-mono text-[10px] text-gray-300"><div className="flex justify-between mb-4"><h3 className="text-green-500">Debug</h3><button onClick={() => setShowDebug(false)}>✕</button></div><div className="mb-4 flex gap-2"><input type="number" className="flex-1 bg-gray-800 p-2" value={forceId} onChange={e => setForceId(e.target.value)} /><button onClick={() => forceGroupLoad(parseInt(forceId))} className="bg-yellow-600 px-3">Load</button></div>{logs.map((l, i) => <div key={i} className="mb-1">{l}</div>)}</div> )}
+        <div className="p-4 space-y-4">
+            <div className="bg-[#27272a] p-6 rounded-2xl flex flex-col items-center">
+                <div className="w-16 h-16 bg-blue-500 rounded-full mb-3 flex items-center justify-center overflow-hidden">
+                    {user.photoUrl ? <img src={user.photoUrl} className="w-full h-full object-cover" /> : <i className="fa-solid fa-user text-2xl"></i>}
+                </div>
+                <h2 className="font-bold text-lg">{user.firstName}</h2>
+                <p className="text-xs text-gray-500">@{user.username}</p>
+            </div>
+            <button onClick={() => leaveGroup(group.id)} className="w-full p-4 bg-red-500/10 text-red-500 rounded-xl font-bold">{t('leave_group')}</button>
+            <button onClick={logout} className="w-full p-4 bg-[#27272a] text-gray-400 rounded-xl font-bold">{t('logout')}</button>
         </div>
     );
-}
-
-const EmptyStateScreen = () => {
-    const { createNewGroup, t } = useContext(AppContext)!;
-    return (
-        <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
-            <h1 className="text-2xl font-bold mb-2">{t('no_groups')}</h1>
-            <p className="text-gray-400 mb-8">{t('no_groups_desc')}</p>
-            <button onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} className="w-full max-w-xs bg-[#3b82f6] text-white py-3 rounded-xl font-bold mb-4">{t('add_to_group_btn')}</button>
-            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold">{t('create_group')}</button>
-        </div>
-    )
-}
+};
 
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('slots');
-  const context = useContext(AppContext);
-  if (context?.error) return <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-8 text-center text-white"><h1 className="text-xl font-bold mb-4">Error</h1><p className="bg-red-900/20 p-4 rounded border border-red-500/30 text-red-200">{context.error}</p></div>
-  if (context?.isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>
-  if (!context?.group) return <EmptyStateScreen />;
+  const { isLoading, isAuthRequired, group, error } = useContext(AppContext)!;
+  if (error) return <div className="min-h-screen bg-[#18181b] p-10 text-red-400">{error}</div>;
+  if (isAuthRequired) return <LoginScreen />;
+  if (isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>;
+  if (!group) return <EmptyStateScreen />;
   return (
     <div className="min-h-screen bg-[#18181b] text-white">
       <Header />
@@ -765,10 +604,93 @@ const AppContent = () => {
   );
 };
 
+const EmptyStateScreen = () => {
+    const { t } = useContext(AppContext)!;
+    return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-10 text-center">
+            <h1 className="text-xl font-bold mb-4">{t('no_groups')}</h1>
+            <p className="text-gray-400 text-sm mb-10">{t('no_groups_desc')}</p>
+            <button onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} className="w-full bg-blue-500 text-white py-4 rounded-xl font-bold">{t('add_to_group_btn')}</button>
+        </div>
+    )
+}
+
 const App = () => {
     useEffect(() => { if (window.Telegram?.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } }, []);
     return <AppProvider><AppContent /></AppProvider>;
 };
+
+// --- ALGORITHM RE-IMPLEMENTATION ---
+class TimeFinderService {
+  static findCommonFreeTime(group: Group, slots: BusySlot[], memberIdsToInclude: number[]) {
+    const config = PLAN_CONFIGS[group.tier];
+    const windowStart = new Date(); windowStart.setHours(0,0,0,0);
+    const windowEnd = new Date(windowStart); windowEnd.setDate(windowEnd.getDate() + config.searchWindowDays);
+
+    const userFreeIntervals: Record<number, TimeSlot[]> = {};
+    group.members.forEach(m => {
+        if (!memberIdsToInclude.includes(m.id)) return;
+        const busy: TimeSlot[] = [];
+        slots.filter(s => s.userId === m.id).forEach(s => {
+            if (s.type === 'ONE_TIME' && s.startAt && s.endAt) busy.push({ start: new Date(s.startAt), end: new Date(s.endAt) });
+            else if (s.type === 'CYCLIC_WEEKLY' && s.dayOfWeek !== undefined) {
+                let curr = new Date(windowStart);
+                while(curr < windowEnd) {
+                    if (curr.getDay() === s.dayOfWeek) {
+                        const [sh, sm] = s.startTimeLocal!.split(':').map(Number);
+                        const [eh, em] = s.endTimeLocal!.split(':').map(Number);
+                        const start = new Date(curr); start.setHours(sh, sm, 0, 0);
+                        const end = new Date(curr); end.setHours(eh, em, 0, 0);
+                        busy.push({ start, end });
+                    }
+                    curr.setDate(curr.getDate()+1);
+                }
+            }
+        });
+        userFreeIntervals[m.id] = this.invertIntervals(this.mergeIntervals(busy), windowStart, windowEnd);
+    });
+
+    let common = userFreeIntervals[memberIdsToInclude[0]] || [];
+    for (let i = 1; i < memberIdsToInclude.length; i++) {
+        common = this.intersectIntervalLists(common, userFreeIntervals[memberIdsToInclude[i]] || []);
+    }
+    return common.map(s => ({ ...s, durationMinutes: (s.end.getTime() - s.start.getTime()) / 60000 })).filter(s => s.durationMinutes >= config.minSlotDurationMin);
+  }
+
+  private static mergeIntervals(intervals: TimeSlot[]): TimeSlot[] {
+    if (!intervals.length) return [];
+    intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
+    const merged = [intervals[0]];
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = merged[merged.length - 1];
+      const curr = intervals[i];
+      if (curr.start <= prev.end) prev.end = new Date(Math.max(prev.end.getTime(), curr.end.getTime()));
+      else merged.push(curr);
+    }
+    return merged;
+  }
+  private static invertIntervals(busy: TimeSlot[], start: Date, end: Date): TimeSlot[] {
+    const free: TimeSlot[] = [];
+    let pointer = new Date(start);
+    for (const slot of busy) {
+      if (slot.start > pointer) free.push({ start: new Date(pointer), end: new Date(slot.start) });
+      pointer = new Date(Math.max(pointer.getTime(), slot.end.getTime()));
+    }
+    if (pointer < end) free.push({ start: new Date(pointer), end: new Date(end) });
+    return free;
+  }
+  private static intersectIntervalLists(l1: TimeSlot[], l2: TimeSlot[]): TimeSlot[] {
+    const result: TimeSlot[] = [];
+    let i = 0, j = 0;
+    while (i < l1.length && j < l2.length) {
+      const s = new Date(Math.max(l1[i].start.getTime(), l2[j].start.getTime()));
+      const e = new Date(Math.min(l1[i].end.getTime(), l2[j].end.getTime()));
+      if (s < e) result.push({ start: s, end: e });
+      if (l1[i].end < l2[j].end) i++; else j++;
+    }
+    return result;
+  }
+}
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<App />);
