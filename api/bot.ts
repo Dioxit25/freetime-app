@@ -84,11 +84,12 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
 
 bot.start(async (ctx) => {
     if (ctx.chat.type !== 'private') return;
-    await ctx.reply('Привет! 👋\nЯ помогу вашей группе выбрать время для встречи.\n\nДля авторизации и настройки просто открой наше приложение ниже — вход произойдет автоматически!', {
+    await ctx.reply('👋 <b>Привет! Я TimeAgree.</b>\n\nЯ помогаю группам находить лучшее время для встреч, не перебирая сотни сообщений.\n\n🔐 <b>Вход автоматический:</b> просто открой приложение кнопкой ниже. Никаких паролей!', {
+        parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [
                 [{ text: '🚀 Открыть Приложение', web_app: { url: WEB_APP_BASE } }],
-                [{ text: '➕ Добавить в группу', url: `https://t.me/${ctx.botInfo.username}?startgroup=true` }]
+                [{ text: '👥 Добавить в группу', url: `https://t.me/${ctx.botInfo.username}?startgroup=true` }]
             ]
         }
     });
@@ -100,13 +101,15 @@ bot.command('find', async (ctx) => {
 
     const chatId = ctx.chat.id;
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
-    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников календаря. Открой приложение ниже, чтобы зарегистрироваться автоматически.');
+    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников. Открой приложение ниже, чтобы я тебя запомнил! 👇', {
+        reply_markup: { inline_keyboard: [[{ text: '🚀 Открыть', url: `${WEB_APP_BASE}?gid=${chatId}` }]] }
+    });
 
     const { data: slots } = await supabase.from('slots').select('*').eq('group_id', chatId);
     const results = findIntersections(members, slots || []);
 
     if (results.length === 0) {
-        return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено среди всех участников.');
+        return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено.');
     }
 
     const text = results.slice(0, 5).map(r => {
@@ -119,13 +122,12 @@ bot.command('find', async (ctx) => {
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [[
-                { text: '🚀 Открыть календарь', url: `${WEB_APP_BASE}?gid=${chatId}` }
+                { text: '📅 Весь календарь', url: `${WEB_APP_BASE}?gid=${chatId}` }
             ]]
         }
     });
 });
 
-// Use my_chat_member to only handle the bot's own status changes to avoid duplicates
 bot.on('my_chat_member', async (ctx) => {
     const status = ctx.myChatMember.new_chat_member.status;
     if (status === 'member' || status === 'administrator') {
@@ -146,12 +148,12 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
         await supabase.from('groups').upsert({ id: chatId, title: chatTitle, tier: 'FREE' }, { onConflict: 'id' });
         const appLink = `${WEB_APP_BASE}?gid=${chatId}`;
         await ctx.reply(
-            `🗓 <b>Календарь для "${chatTitle}" готов!</b>\n\nОтмечайте занятое время в приложении (вход автоматический), а потом используйте команду /find для поиска встречи.`, 
+            `🗓 <b>Календарь для "${chatTitle}" активирован!</b>\n\n1. Отметьте свою занятость в приложении.\n2. Используйте /find для поиска идеального времени.`, 
             {
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [[
-                        { text: '🚀 Открыть Календарь', url: appLink }
+                        { text: '🚀 Настроить занятость', url: appLink }
                     ]]
                 }
             }
