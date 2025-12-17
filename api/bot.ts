@@ -6,8 +6,11 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 
-// IMPORTANT: Must EXACTLY match BotFather (including the trailing slash!)
-const WEB_APP_URL = 'https://freetime-app-rho.vercel.app/';
+// Your Bot Username (without @)
+const BOT_USERNAME = 'TimeAgreeBot';
+// Your App Short Name (from BotFather -> Edit App)
+// If you didn't set it explicitly, it's usually 'app'
+const APP_SHORT_NAME = 'app';
 
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
@@ -15,16 +18,7 @@ const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUP
 // --- COMMANDS ---
 
 bot.command('ping', async (ctx) => {
-    await ctx.reply('Pong! 🏓 Бот работает в штатном режиме.');
-});
-
-bot.command('help_setup', async (ctx) => {
-    await ctx.reply(
-        `🛠 <b>Настройка прямого доступа:</b>\n\n` +
-        `Если кнопка в группе не открывает приложение, убедитесь, что в @BotFather в разделе "Edit Web App" указан именно этот URL:\n` +
-        `<code>${WEB_APP_URL}</code>`,
-        { parse_mode: 'HTML' }
-    );
+    await ctx.reply('Pong! 🏓 Бот активен и готов к работе.');
 });
 
 bot.start(async (ctx) => {
@@ -67,7 +61,7 @@ bot.command('init', async (ctx) => {
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     if (!supabase) return ctx.reply("⚠️ Ошибка: Supabase не подключен.");
 
-    // Регистрируем группу в БД
+    // Регистрируем/обновляем группу в БД
     const { error } = await supabase.from('groups').upsert({
         id: chatId,
         title: chatTitle,
@@ -76,34 +70,28 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
 
     if (error) return ctx.reply(`❌ Ошибка БД: ${error.message}`);
 
-    // Формируем URL. Знак '?' идет сразу после слеша.
-    // Это гарантирует, что Telegram сочтет URL валидным для данного бота.
-    const directUrl = `${WEB_APP_URL}?gid=${chatId}`;
+    // В группах Telegram разрешает открывать Mini App только через ссылки вида t.me/bot/app?startapp=...
+    // Это автоматически открывает приложение как оверлей.
+    const appLink = `https://t.me/${BOT_USERNAME}/${APP_SHORT_NAME}?startapp=gid_${chatId}`;
 
     try {
         await ctx.reply(
-            `🗓 <b>Общий календарь для "${chatTitle}"</b>\n\nНажмите кнопку ниже, чтобы открыть приложение прямо в этом чате.`, 
+            `🗓 <b>Общий календарь для "${chatTitle}"</b>\n\nНажмите кнопку ниже, чтобы отметить свою занятость и найти общее время.`, 
             {
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [[
                         { 
                             text: '🚀 Открыть Календарь', 
-                            web_app: { url: directUrl } 
+                            url: appLink 
                         }
                     ]]
                 }
             }
         );
     } catch (e: any) {
-        console.error("Critical Button Error:", e.message);
-        // Если кнопка все равно не проходит валидацию Telegram, выводим техническую ошибку для админа
-        await ctx.reply(
-            `❌ <b>Ошибка конфигурации кнопок.</b>\n\n` +
-            `Telegram отклонил кнопку web_app. Убедитесь, что URL в BotFather в точности совпадает с:\n` +
-            `<code>${WEB_APP_URL}</code>`,
-            { parse_mode: 'HTML' }
-        );
+        console.error("Button error:", e.message);
+        await ctx.reply(`❌ Не удалось создать кнопку. Используйте прямую ссылку: ${appLink}`);
     }
 }
 
