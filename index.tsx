@@ -59,8 +59,8 @@ interface TimeSlot {
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
-    login_welcome: "Open via Telegram",
-    login_desc: "Authorization happens automatically when you open the Mini App inside Telegram.",
+    login_welcome: "Telegram Access Required",
+    login_desc: "This app works inside Telegram. Please open it via our official bot to log in automatically.",
     logout: "Logout",
     upgrade: "UPGRADE",
     my_slots: "My Slots",
@@ -99,12 +99,12 @@ const TRANSLATIONS = {
     no_groups: "No Groups Yet",
     no_groups_desc: "Add the bot to a Telegram group to get started!",
     add_to_group_btn: "Add Bot to Group",
-    open_in_tg: "Go to Bot"
+    open_in_tg: "Open Bot"
   },
   ru: {
     app_name: "TimeAgree",
-    login_welcome: "Откройте в Telegram",
-    login_desc: "Авторизация происходит автоматически при открытии приложения через бота в Telegram.",
+    login_welcome: "Вход через Telegram",
+    login_desc: "Приложение работает внутри Telegram. Откройте его через нашего официального бота для автоматического входа.",
     logout: "Выйти",
     upgrade: "PREMIUM",
     my_slots: "Мои слоты",
@@ -143,7 +143,7 @@ const TRANSLATIONS = {
     no_groups: "Нет групп",
     no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
     add_to_group_btn: "Добавить бота в группу",
-    open_in_tg: "Перейти к боту"
+    open_in_tg: "Открыть бота"
   }
 };
 
@@ -169,8 +169,8 @@ interface AppState {
   error: string | null;
   logs: string[];
   t: (key: string, ...args: any[]) => string;
-  saveSlot: (slot: Partial<BusySlot> | Partial<BusySlot>[]) => Promise<void>;
-  removeSlot: (id: string) => void;
+  saveSlot: (slot: Partial<BusySlot> | Partial<BusySlot>[], isEdit?: boolean) => Promise<void>;
+  removeSlot: (slot: BusySlot) => Promise<void>;
   refreshData: () => void;
   switchGroup: (groupId: number) => void;
   leaveGroup: (groupId: number) => void;
@@ -205,10 +205,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       addLog("Initializing...");
       setIsLoading(true);
 
-      // 1. Get user directly from Telegram WebApp
       let tgUserRaw = externalUser || window.Telegram?.WebApp?.initDataUnsafe?.user;
 
-      // 2. Fallback to localStorage for debug/persistence
       if (!tgUserRaw) {
         const saved = localStorage.getItem('tg_user_session');
         if (saved) {
@@ -217,9 +215,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }
       }
 
-      // 3. If still no user, we can't do anything
       if (!tgUserRaw) {
-        addLog("No user detected. Auth required via TG.");
+        addLog("No user detected. External redirect required.");
         setIsAuthRequired(true);
         setIsLoading(false);
         return;
@@ -314,7 +311,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const onAuthSuccess = (tgUser: any) => {
-      addLog("External Auth Data received");
       initApp(tgUser);
   };
 
@@ -323,9 +319,21 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       window.location.reload();
   };
 
-  const saveSlot = async (payload: Partial<BusySlot> | Partial<BusySlot>[]) => {
+  const saveSlot = async (payload: Partial<BusySlot> | Partial<BusySlot>[], isEdit: boolean = false) => {
     if (!user || !group) return;
     const items = Array.isArray(payload) ? payload : [payload];
+    
+    // If we are editing a cycle, we should replace all old entries of that cycle first
+    if (isEdit && items[0].type === 'CYCLIC_WEEKLY') {
+        const description = items[0].description || "";
+        await supabase.from('slots')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('group_id', group.id)
+            .eq('type', 'CYCLIC_WEEKLY')
+            .eq('description', description);
+    }
+
     const dataToInsert = items.map(slot => {
         const obj: any = {
             user_id: user.id, 
@@ -338,7 +346,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             start_time_local: slot.startTimeLocal, 
             end_time_local: slot.endTimeLocal
         };
-        if (slot.id) obj.id = slot.id;
+        // For one-time slots, keep the ID for upsert. 
+        // For cycles being edited, we delete and re-insert, so we don't need IDs.
+        if (slot.id && slot.type !== 'CYCLIC_WEEKLY') obj.id = slot.id;
         return obj;
     });
     
@@ -350,9 +360,22 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  const removeSlot = async (id: string) => { 
-      const { error: delError } = await supabase.from('slots').delete().eq('id', id);
+  const removeSlot = async (slot: BusySlot) => { 
+      if (!user || !group) return;
+      
+      let query = supabase.from('slots').delete().eq('user_id', user.id).eq('group_id', group.id);
+      
+      if (slot.type === 'CYCLIC_WEEKLY') {
+          // Delete entire cycle based on description and type
+          query = query.eq('type', 'CYCLIC_WEEKLY').eq('description', slot.description || "");
+      } else {
+          // One-time slot - delete only by ID
+          query = query.eq('id', slot.id);
+      }
+      
+      const { error: delError } = await query;
       if (!delError && group) await fetchSlots(group.id);
+      else if (delError) alert("Delete Error: " + delError.message);
   };
   
   const switchGroup = async (groupId: number) => { await loadGroupData(groupId); };
@@ -386,27 +409,29 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const LoginScreen = () => {
     const { t } = useContext(AppContext)!;
-    
-    const openBot = () => {
-        window.open(`https://t.me/${BOT_USERNAME}`, '_blank');
-    };
+    const openBot = () => { window.open(`https://t.me/${BOT_USERNAME}`, '_blank'); };
 
     return (
-        <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-6 text-center text-white">
-            <div className="w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center mb-6 shadow-xl shadow-blue-500/20">
-                <i className="fa-brands fa-telegram text-4xl"></i>
+        <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-8 text-center text-white">
+            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/30 rotate-3">
+                <i className="fa-brands fa-telegram text-5xl"></i>
             </div>
-            <h1 className="text-2xl font-bold mb-2">{t('login_welcome')}</h1>
-            <p className="text-gray-400 mb-10 text-sm max-w-xs">{t('login_desc')}</p>
+            <h1 className="text-2xl font-black mb-4 tracking-tight">{t('login_welcome')}</h1>
+            <p className="text-gray-400 mb-12 text-sm leading-relaxed max-w-[280px] mx-auto">{t('login_desc')}</p>
             
             <button 
                 onClick={openBot}
-                className="px-8 py-4 bg-blue-500 rounded-2xl text-base font-bold shadow-lg shadow-blue-500/20 hover:bg-blue-600 transition active:scale-95"
+                className="w-full max-w-[260px] px-8 py-5 bg-blue-500 rounded-2xl text-base font-bold shadow-xl shadow-blue-500/20 hover:bg-blue-600 transition active:scale-95 flex items-center justify-center gap-3"
             >
+                <i className="fa-solid fa-paper-plane"></i>
                 {t('open_in_tg')}
             </button>
             
-            <p className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">Automatic login via Telegram Mini App</p>
+            <div className="mt-16 flex items-center gap-2 opacity-30">
+                <div className="h-[1px] w-8 bg-white"></div>
+                <span className="text-[9px] uppercase font-bold tracking-[0.2em]">Secured by Telegram</span>
+                <div className="h-[1px] w-8 bg-white"></div>
+            </div>
         </div>
     );
 };
@@ -512,7 +537,7 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
 };
 
 const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: boolean, onClose: () => void, initialDate: Date, editingSlot: BusySlot | null }) => {
-    const { saveSlot, removeSlot, t, lang } = useContext(AppContext)!;
+    const { saveSlot, removeSlot, t, lang, mySlots } = useContext(AppContext)!;
     const [type, setType] = useState<SlotType>('ONE_TIME');
     const [start, setStart] = useState("09:00");
     const [end, setEnd] = useState("18:00");
@@ -532,8 +557,14 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
                 if (editingSlot.type === 'ONE_TIME' && editingSlot.startAt) {
                     setDate(editingSlot.startAt.split('T')[0]);
                 }
-                if (editingSlot.dayOfWeek !== undefined) {
-                    setSelectedDays([editingSlot.dayOfWeek]);
+                
+                if (editingSlot.type === 'CYCLIC_WEEKLY') {
+                    // Find all days that belong to this cycle (same description)
+                    const cycleDays = mySlots
+                        .filter(s => s.type === 'CYCLIC_WEEKLY' && s.description === editingSlot.description)
+                        .map(s => s.dayOfWeek)
+                        .filter((d): d is number => d !== undefined);
+                    setSelectedDays(cycleDays.length > 0 ? Array.from(new Set(cycleDays)) : [editingSlot.dayOfWeek!]);
                 } else {
                     setSelectedDays([]);
                 }
@@ -548,7 +579,7 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
                 setType('ONE_TIME');
             }
         }
-    }, [isOpen, initialDate, editingSlot]);
+    }, [isOpen, initialDate, editingSlot, mySlots]);
 
     if (!isOpen) return null;
 
@@ -559,14 +590,13 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
     const handleSave = async () => {
         if (type === 'CYCLIC_WEEKLY') {
             const payloads = selectedDays.map(day => ({
-                id: editingSlot?.id && selectedDays.length === 1 ? editingSlot.id : undefined,
                 type: 'CYCLIC_WEEKLY' as SlotType,
                 dayOfWeek: day,
                 startTimeLocal: start,
                 endTimeLocal: end,
                 description
             }));
-            await saveSlot(payloads);
+            await saveSlot(payloads, editingSlot ? true : false);
         } else {
             const startD = new Date(`${date}T${start}:00`);
             const endD = new Date(`${date}T${end}:00`);
@@ -585,7 +615,7 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
 
     const handleDelete = async () => {
         if (editingSlot) {
-            await removeSlot(editingSlot.id);
+            await removeSlot(editingSlot);
             onClose();
         }
     };
