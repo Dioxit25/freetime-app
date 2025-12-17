@@ -75,6 +75,7 @@ const TRANSLATIONS = {
     i_am_busy: "I am busy...",
     edit_slot: "Edit Busy Slot",
     save_availability: "Save Availability",
+    delete_slot: "Delete Slot",
     day_of_week: "Days of Week",
     date: "Date",
     from: "From",
@@ -118,6 +119,7 @@ const TRANSLATIONS = {
     i_am_busy: "Я занят...",
     edit_slot: "Редактировать",
     save_availability: "Сохранить",
+    delete_slot: "Удалить слот",
     day_of_week: "Дни недели",
     date: "Дата",
     from: "С",
@@ -203,8 +205,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       addLog("Initializing...");
       setIsLoading(true);
 
+      // 1. Try to get user from Telegram WebApp context
       let tgUserRaw = externalUser || window.Telegram?.WebApp?.initDataUnsafe?.user;
 
+      // 2. If not found, check localStorage
       if (!tgUserRaw) {
         const saved = localStorage.getItem('tg_user_session');
         if (saved) {
@@ -213,6 +217,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }
       }
 
+      // 3. If still not found, trigger Auth Screen
       if (!tgUserRaw) {
         addLog("No user detected. Auth required.");
         setIsAuthRequired(true);
@@ -221,7 +226,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       }
 
       setIsAuthRequired(false);
-      setLang(tgUserRaw.language_code?.startsWith('ru') ? 'ru' : 'en');
+      const userLang = tgUserRaw.language_code?.startsWith('ru') ? 'ru' : 'en';
+      setLang(userLang as LangCode);
 
       const currentUser: User = {
         id: tgUserRaw.id,
@@ -253,7 +259,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
       } else {
           const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-          if (startParam?.startsWith('gid_')) targetGroupId = parseInt(startParam.split('_')[1]);
+          if (startParam?.startsWith('gid_')) {
+              targetGroupId = parseInt(startParam.split('_')[1]);
+              await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
+          }
       }
 
       await fetchUserGroups(currentUser.id);
@@ -317,12 +326,22 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const saveSlot = async (payload: Partial<BusySlot> | Partial<BusySlot>[]) => {
     if (!user || !group) return;
     const items = Array.isArray(payload) ? payload : [payload];
-    const dataToInsert = items.map(slot => ({
-        id: slot.id,
-        user_id: user.id, group_id: group.id, type: slot.type, description: slot.description,
-        start_at: slot.startAt || null, end_at: slot.endAt || null,
-        day_of_week: slot.dayOfWeek, start_time_local: slot.startTimeLocal, end_time_local: slot.endTimeLocal
-    }));
+    const dataToInsert = items.map(slot => {
+        // Construct object without ID if it doesn't exist to avoid Supabase NOT NULL constraint error on insert
+        const obj: any = {
+            user_id: user.id, 
+            group_id: group.id, 
+            type: slot.type, 
+            description: slot.description,
+            start_at: slot.startAt || null, 
+            end_at: slot.endAt || null,
+            day_of_week: slot.dayOfWeek, 
+            start_time_local: slot.startTimeLocal, 
+            end_time_local: slot.endTimeLocal
+        };
+        if (slot.id) obj.id = slot.id;
+        return obj;
+    });
     
     const { error: insertError } = await supabase.from('slots').upsert(dataToInsert, { onConflict: 'id' });
     if (insertError) {
@@ -481,7 +500,7 @@ const SlotCard: React.FC<{ slot: BusySlot; onEdit: () => void }> = ({ slot, onEd
                     {isCyclic ? `${days[slot.dayOfWeek!]} • ${slot.startTimeLocal} - ${slot.endTimeLocal}` : `${new Date(slot.startAt!).toLocaleDateString(lang)} • ${new Date(slot.startAt!).toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}`}
                 </div>
             </div>
-            <i className="fa-solid fa-chevron-right text-gray-600 text-[10px]"></i>
+            <i className="fa-solid fa-pen text-gray-600 text-[10px]"></i>
         </div>
     )
 }
@@ -534,8 +553,14 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
                 setStart(editingSlot.startTimeLocal || "09:00");
                 setEnd(editingSlot.endTimeLocal || "18:00");
                 setDescription(editingSlot.description || "");
-                if (editingSlot.type === 'ONE_TIME' && editingSlot.startAt) setDate(editingSlot.startAt.split('T')[0]);
-                if (editingSlot.dayOfWeek !== undefined) setSelectedDays([editingSlot.dayOfWeek]);
+                if (editingSlot.type === 'ONE_TIME' && editingSlot.startAt) {
+                    setDate(editingSlot.startAt.split('T')[0]);
+                }
+                if (editingSlot.dayOfWeek !== undefined) {
+                    setSelectedDays([editingSlot.dayOfWeek]);
+                } else {
+                    setSelectedDays([]);
+                }
             } else {
                 const offset = initialDate.getTimezoneOffset();
                 const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
@@ -558,7 +583,7 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
     const handleSave = async () => {
         if (type === 'CYCLIC_WEEKLY') {
             const payloads = selectedDays.map(day => ({
-                id: editingSlot?.id,
+                id: editingSlot?.id && selectedDays.length === 1 ? editingSlot.id : undefined,
                 type: 'CYCLIC_WEEKLY' as SlotType,
                 dayOfWeek: day,
                 startTimeLocal: start,
@@ -639,7 +664,7 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
                 <div className="flex flex-col gap-3">
                     <button onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('save_availability')}</button>
                     {editingSlot && (
-                        <button onClick={handleDelete} className="w-full bg-red-500/10 text-red-500 py-4 rounded-xl font-bold border border-red-500/20 active:scale-95 transition">Удалить слот</button>
+                        <button onClick={handleDelete} className="w-full bg-red-500/10 text-red-500 py-4 rounded-xl font-bold border border-red-500/20 active:scale-95 transition">{t('delete_slot')}</button>
                     )}
                 </div>
             </div>
