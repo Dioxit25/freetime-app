@@ -6,15 +6,14 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 
-// Initial log
-console.log(`[STARTUP] Token Present: ${!!BOT_TOKEN}`);
+// IMPORTANT: This URL must be registered in BotFather!
+const WEB_APP_URL = 'https://freetime-app-rho.vercel.app';
 
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 let botInfoCache: any = null;
 
-// Helper to get bot username safely
 async function getBotUsername() {
     if (bot.botInfo) return bot.botInfo.username;
     if (botInfoCache) return botInfoCache.username;
@@ -29,15 +28,12 @@ async function getBotUsername() {
 // --- COMMANDS ---
 
 bot.command('ping', async (ctx) => {
-    console.log(`[CMD] /ping from ${ctx.from.id}`);
-    await ctx.reply('Pong! 🏓 Я работаю.');
+    await ctx.reply('Pong! 🏓');
 });
 
 bot.start(async (ctx) => {
-    console.log(`[CMD] /start from ${ctx.from.id}`);
     const username = await getBotUsername();
-    
-    await ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями, и я создам общий календарь!', {
+    await ctx.reply('Привет! 👋\nЯ помогу найти время для встреч.\n\nДобавьте меня в группу с друзьями!', {
         reply_markup: {
             inline_keyboard: [[
                 { text: '➕ Добавить в группу', url: `https://t.me/${username}?startgroup=true` }
@@ -61,91 +57,62 @@ bot.on(['my_chat_member', 'new_chat_members'], async (ctx) => {
             }
         }
     } catch (e) {
-        console.error("Error in event handler:", e);
+        console.error("Event error:", e);
     }
 });
 
 bot.command('init', async (ctx) => {
-    try {
-        const chat = ctx.chat as any;
-        const title = chat.title || 'Unknown Group';
-        
-        if (chat.type === 'private') {
-            return ctx.reply('Команда /init работает только внутри групп. Добавьте меня в группу!');
-        }
-
-        await initializeGroup(ctx, chat.id, title);
-    } catch (e: any) {
-        console.error("Critical error in /init:", e);
-        await ctx.reply(`❌ Ошибка бота: ${e.message}`);
-    }
+    const chat = ctx.chat as any;
+    if (chat.type === 'private') return ctx.reply('Только для групп!');
+    await initializeGroup(ctx, chat.id, chat.title || 'Unknown');
 });
 
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
-    console.log(`[INIT] Group: ${chatTitle} (${chatId})`);
+    if (!supabase) return ctx.reply("⚠️ Ошибка БД.");
 
-    if (!supabase) {
-        return ctx.reply("⚠️ Ошибка: База данных не подключена.");
-    }
-
-    // 1. Register/Update Group in Supabase
     const { error } = await supabase.from('groups').upsert({
         id: chatId,
         title: chatTitle,
         tier: 'FREE'
     }, { onConflict: 'id' });
 
-    if (error) {
-        console.error("[DB ERROR]", error);
-        return ctx.reply(`⚠️ Ошибка базы данных: ${error.message}`);
-    }
+    if (error) return ctx.reply(`⚠️ Ошибка БД: ${error.message}`);
 
-    // 2. Prepare Deep Link instead of direct WebApp object
-    // This is much more stable and bypasses BUTTON_TYPE_INVALID
-    const username = await getBotUsername();
-    const deepLink = `https://t.me/${username}/app?startapp=gid_${chatId}`;
+    // DIRECT LAUNCH URL with query parameter
+    // index.tsx logic: startParam = urlParams.get('gid')
+    const directUrl = `${WEB_APP_URL}?gid=${chatId}`;
 
-    // 3. Send Reply
     try {
         await ctx.reply(
-            `🗓 <b>Календарь для группы "${chatTitle}" готов!</b>\n\nНажмите кнопку ниже, чтобы открыть приложение.`, 
+            `🗓 <b>Календарь для группы "${chatTitle}" готов!</b>`, 
             {
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [[
                         { 
-                            text: '🚀 Открыть Календарь', 
-                            url: deepLink 
+                            text: '🚀 Открыть Прямо Здесь', 
+                            web_app: { url: directUrl } 
                         }
                     ]]
                 }
             }
         );
     } catch (e: any) {
-        console.error(`[TELEGRAM ERROR] ${e.message}`);
-        await ctx.reply(`❌ Ошибка Telegram: ${e.message}`);
+        // Fallback to Deep Link if web_app button still fails for some reason
+        const username = await getBotUsername();
+        await ctx.reply(`Используйте эту ссылку для входа:\nhttps://t.me/${username}/app?startapp=gid_${chatId}`);
     }
 }
 
 // --- VERCEL HANDLER ---
 export default async function handler(request: any, response: any) {
-    if (request.method === 'GET') {
-        return response.status(200).json({ status: 'Bot Active' });
-    }
+    if (request.method === 'GET') return response.status(200).json({ status: 'OK' });
 
     try {
-        if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
-        const body = request.body;
-
-        // Ensure botInfo is populated for commands that need it
-        if (!bot.botInfo) {
-            bot.botInfo = botInfoCache || await bot.telegram.getMe();
-        }
-
-        await bot.handleUpdate(body);
+        if (!bot.botInfo) bot.botInfo = botInfoCache || await bot.telegram.getMe();
+        await bot.handleUpdate(request.body);
         response.status(200).json({ ok: true });
     } catch (e: any) {
-        console.error("[HANDLER ERROR]", e);
         response.status(200).json({ error: e.message });
     }
 }
