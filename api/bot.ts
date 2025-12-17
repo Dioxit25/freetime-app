@@ -11,7 +11,7 @@ const WEB_APP_BASE = 'https://freetime-app-rho.vercel.app/';
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// --- UTILS FOR CALCULATION (Simplified for Bot) ---
+// --- UTILS FOR CALCULATION ---
 interface TimeSlot { start: Date; end: Date; }
 
 function findIntersections(members: any[], slots: any[], days: number = 7): TimeSlot[] {
@@ -40,7 +40,6 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
             }
         });
 
-        // Invert busy to free
         const sortedBusy = busy.sort((a,b) => a.start.getTime() - b.start.getTime());
         const merged: TimeSlot[] = [];
         if (sortedBusy.length) {
@@ -100,13 +99,13 @@ bot.command('find', async (ctx) => {
 
     const chatId = ctx.chat.id;
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
-    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников календаря.');
+    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников календаря. Откройте приложение, чтобы зарегистрироваться.');
 
     const { data: slots } = await supabase.from('slots').select('*').eq('group_id', chatId);
     const results = findIntersections(members, slots || []);
 
     if (results.length === 0) {
-        return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено.');
+        return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено среди всех участников.');
     }
 
     const text = results.slice(0, 5).map(r => {
@@ -115,9 +114,17 @@ bot.command('find', async (ctx) => {
         return `✅ <b>${date}</b>: ${time}`;
     }).join('\n');
 
-    await ctx.reply(`✨ <b>Лучшие окна для встречи:</b>\n\n${text}\n\n<i>Найдено среди ${members.length} участников.</i>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✨ <b>Лучшие окна для встречи:</b>\n\n${text}\n\n<i>Найдено среди ${members.length} участников.</i>`, { 
+        parse_mode: 'HTML',
+        reply_markup: {
+            inline_keyboard: [[
+                { text: '🚀 Открыть календарь', url: `${WEB_APP_BASE}?gid=${chatId}` }
+            ]]
+        }
+    });
 });
 
+// Use my_chat_member to only handle the bot's own status changes to avoid duplicates
 bot.on('my_chat_member', async (ctx) => {
     const status = ctx.myChatMember.new_chat_member.status;
     if (status === 'member' || status === 'administrator') {
