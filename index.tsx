@@ -6,9 +6,9 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_KEY;
-const BOT_USERNAME = 'FreeTimeBot'; 
+const BOT_USERNAME = 'TimeAgreeBot'; // Updated to match your bot
 
-// --- TYPES (Domain Layer) ---
+// --- TYPES ---
 
 type SlotType = 'ONE_TIME' | 'CYCLIC_WEEKLY';
 type PlanTier = 'FREE' | 'GROUP_PRO' | 'BUSINESS';
@@ -54,7 +54,7 @@ interface TimeSlot {
   end: Date;
 }
 
-// --- LOCALIZATION (I18n) ---
+// --- LOCALIZATION ---
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
@@ -168,7 +168,6 @@ const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
   BUSINESS: { maxMembers: 200, searchWindowDays: 60, minSlotDurationMin: 15, allowAutoSearch: true }
 };
 
-// Initialize Supabase
 const supabase = createClient(SUPABASE_URL || '', SUPABASE_KEY || '');
 
 // --- ALGORITHM SERVICE ---
@@ -192,8 +191,7 @@ class TimeFinderService {
       if (slot.type === 'ONE_TIME' && slot.startAt && slot.endAt) {
         userBusyIntervals[slot.userId].push({ start: new Date(slot.startAt), end: new Date(slot.endAt) });
       } else if (slot.type === 'CYCLIC_WEEKLY' && slot.dayOfWeek !== undefined && slot.startTimeLocal && slot.endTimeLocal) {
-        const userTz = activeMembers.find(m => m.id === slot.userId)?.timezone || 'UTC';
-        userBusyIntervals[slot.userId].push(...this.expandCyclicSlot(slot, windowStart, windowEnd, userTz));
+        userBusyIntervals[slot.userId].push(...this.expandCyclicSlot(slot, windowStart, windowEnd));
       }
     });
 
@@ -220,7 +218,7 @@ class TimeFinderService {
       .sort((a, b) => a.start.getTime() - b.start.getTime());
   }
 
-  private static expandCyclicSlot(slot: BusySlot, windowStart: Date, windowEnd: Date, _userTimezone: string): TimeSlot[] {
+  private static expandCyclicSlot(slot: BusySlot, windowStart: Date, windowEnd: Date): TimeSlot[] {
     const result: TimeSlot[] = [];
     let current = new Date(windowStart);
     current.setHours(0,0,0,0);
@@ -336,10 +334,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
         });
         
-        if (userError) {
-             addLog(`DB User Error: ${userError.message}`);
-             throw new Error(`User Sync Error: ${userError.message}`);
-        }
+        if (userError) throw new Error(`User Sync Error: ${userError.message}`);
 
         const currentUser: User = {
           id: tgUser.id,
@@ -350,82 +345,61 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         };
         setUser(currentUser);
 
-        // --- START PARAM PARSING LOGIC ---
-        // Priority 1: Telegram Standard Param (from Deep Link)
+        // --- PARAM PARSING ---
         let startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
         
-        // Priority 2: URL Hash Param (Robust fallback for redirects)
-        if (!startParam) {
-            const hash = window.location.hash;
+        // Check hash first (for web_app buttons with hash)
+        const hash = window.location.hash;
+        if (!startParam && hash) {
+            addLog(`Checking hash: ${hash}`);
             if (hash.includes('gid=')) {
                 startParam = `gid_${hash.split('gid=')[1].split('&')[0]}`;
+            } else if (hash.startsWith('#gid_')) {
+                startParam = hash.substring(1);
             }
         }
 
-        // Priority 3: URL Query Param (Standard Web)
+        // Check query (for web_app buttons with query)
         if (!startParam) {
             const urlParams = new URLSearchParams(window.location.search);
-            startParam = urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || urlParams.get('gid');
-            // Support direct gid param like ?gid=123
-            if (urlParams.get('gid')) startParam = `gid_${urlParams.get('gid')}`;
+            startParam = urlParams.get('startapp') || urlParams.get('gid');
+            if (urlParams.get('gid') && !startParam?.startsWith('gid_')) {
+                startParam = `gid_${urlParams.get('gid')}`;
+            }
         }
 
-        addLog(`Start Param: ${startParam || 'None'}`);
+        addLog(`Final Param: ${startParam || 'None'}`);
 
         let targetGroupId: number | null = null;
 
         if (startParam && startParam.startsWith('gid_')) {
             const idStr = startParam.split('_')[1];
             const inviteId = parseInt(idStr);
-            addLog(`Found Invite ID: ${inviteId}`);
-            
             if (!isNaN(inviteId)) {
-                // Link user to group
-                const { error: joinErr } = await supabase.from('group_members').upsert({
-                    group_id: inviteId,
-                    user_id: currentUser.id
-                }, { onConflict: 'group_id, user_id' });
-                
-                if (joinErr) {
-                    addLog(`Join Error: ${joinErr.message}`);
-                } else {
-                    targetGroupId = inviteId;
-                }
+                await supabase.from('group_members').upsert({ group_id: inviteId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
+                targetGroupId = inviteId;
             }
         }
 
-        // Fetch User's Groups
         await fetchUserGroups(currentUser.id);
 
         if (!targetGroupId) {
-            addLog("Checking existing groups...");
             const { data: membersData } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id);
-            if (membersData && membersData.length > 0) {
-                targetGroupId = membersData[0].group_id; 
-                addLog(`Auto-selecting group: ${targetGroupId}`);
-            }
+            if (membersData && membersData.length > 0) targetGroupId = membersData[0].group_id;
         }
 
-        if (targetGroupId) {
-            await loadGroupData(targetGroupId);
-        } else {
-            addLog("No groups found.");
-            setIsLoading(false);
-        }
+        if (targetGroupId) await loadGroupData(targetGroupId);
+        else setIsLoading(false);
 
       } catch (e: any) {
-        console.error("Init failed:", e);
         setError(e.message);
         addLog(`CRITICAL: ${e.message}`);
         setIsLoading(false);
       }
     };
 
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-         setError("Supabase credentials missing.");
-    } else {
-         initApp();
-    }
+    if (!SUPABASE_URL || !SUPABASE_KEY) setError("Supabase credentials missing.");
+    else initApp();
   }, []);
 
   const fetchUserGroups = async (userId: number) => {
@@ -438,59 +412,33 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setIsLoading(true);
     addLog(`Loading Group ${groupId}...`);
     const { data: groupData, error: gErr } = await supabase.from('groups').select('*').eq('id', groupId).single();
-    
-    if (gErr || !groupData) { 
-        addLog(`Group Load Error: ${gErr?.message || 'Not found'}`);
-        setIsLoading(false); 
-        return; 
-    }
+    if (gErr || !groupData) { setIsLoading(false); return; }
 
     const { data: membersData } = await supabase.from('group_members').select('user_id, users(id, username, first_name, timezone)').eq('group_id', groupId);
-
     const members: User[] = membersData?.map((m: any) => ({
-        id: m.users.id,
-        username: m.users.username,
-        firstName: m.users.first_name,
-        timezone: m.users.timezone
+        id: m.users.id, username: m.users.username, firstName: m.users.first_name, timezone: m.users.timezone
     })) || [];
 
-    setGroup({
-        id: groupData.id,
-        title: groupData.title,
-        tier: groupData.tier as PlanTier,
-        members: members
-    });
-
+    setGroup({ id: groupData.id, title: groupData.title, tier: groupData.tier as PlanTier, members: members });
     await fetchSlots(groupId);
     setIsLoading(false);
   };
 
   const forceGroupLoad = async (groupId: number) => {
       if (!user) return;
-      addLog(`FORCE LOAD: ${groupId}`);
-      // Ensure user is member
-      const { error: joinErr } = await supabase.from('group_members').upsert({
-          group_id: groupId,
-          user_id: user.id
-      }, { onConflict: 'group_id, user_id' });
-      
-      if (!joinErr) {
-        await fetchUserGroups(user.id);
-        await loadGroupData(groupId);
-      } else {
-        addLog(`Force Join Error: ${joinErr.message}`);
-      }
+      await supabase.from('group_members').upsert({ group_id: groupId, user_id: user.id }, { onConflict: 'group_id, user_id' });
+      await fetchUserGroups(user.id);
+      await loadGroupData(groupId);
   };
 
   const fetchSlots = async (groupId: number) => {
     const { data } = await supabase.from('slots').select('*').eq('group_id', groupId);
     if (data) {
-        const mapped: BusySlot[] = data.map((s: any) => ({
+        setAllSlots(data.map((s: any) => ({
             id: s.id, userId: s.user_id, groupId: s.group_id, type: s.type, description: s.description,
             startAt: s.start_at, endAt: s.end_at, dayOfWeek: s.day_of_week,
             startTimeLocal: s.start_time_local?.slice(0,5), endTimeLocal: s.end_time_local?.slice(0,5)
-        }));
-        setAllSlots(mapped);
+        })));
     }
   };
 
@@ -516,7 +464,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       if (remaining.length > 0) switchGroup(remaining[0].id); else setGroup(null);
   };
 
-  // Realtime subscription setup omitted for brevity in XML, assumes logic is sound.
   useEffect(() => {
     if (!group) return;
     const channel = supabase.channel('db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'slots', filter: `group_id=eq.${group.id}` }, () => fetchSlots(group.id)).subscribe();
@@ -555,11 +502,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 // --- UI COMPONENTS ---
-// (Components Header, TabBar, MiniCalendar, SlotCard, AddSlotModal, SearchScreen, SettingsScreen omitted as they are unchanged functionally)
-// Re-including Header, TabBar etc to ensure file is complete for XML replacement if user wants, 
-// but to save space/tokens I will assume the structure and only provide the new Debug component and the updated AppProvider above.
-
-// NOTE: I am providing the FULL index.tsx below to be safe as per instructions.
 
 const Header = () => {
     const context = useContext(AppContext);
@@ -659,12 +601,11 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
                     const isSelected = selectedDate.getDate() === day && selectedDate.getMonth() === viewDate.getMonth() && selectedDate.getFullYear() === viewDate.getFullYear();
                     const { hasCyclic, hasOneTime } = checkSlotStatus(day);
                     let cellClass = "text-gray-400 hover:bg-white/5"; 
-                    const glassBase = "backdrop-blur-sm border shadow-inner transition-all";
-                    if (hasCyclic && hasOneTime) cellClass = `${glassBase} bg-gradient-to-br from-blue-500/20 to-purple-500/20 border-white/10 text-white`;
-                    else if (hasCyclic) cellClass = `${glassBase} bg-blue-500/10 border-blue-500/20 text-blue-200`;
-                    else if (hasOneTime) cellClass = `${glassBase} bg-purple-500/10 border-purple-500/20 text-purple-200`;
-                    if (isSelected) cellClass = "bg-[#3b82f6] text-white shadow-[0_0_15px_rgba(59,130,246,0.6)] border border-blue-400 font-bold scale-105 z-10";
-                    return ( <button key={day} onClick={() => { const d = new Date(viewDate.getFullYear(), viewDate.getMonth(), day); onSelectDate(d); }} className={`h-10 w-full rounded-xl flex items-center justify-center relative active:scale-95 ${cellClass}`}><span className="text-sm font-medium">{day}</span></button> );
+                    if (hasCyclic && hasOneTime) cellClass = "bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 text-white";
+                    else if (hasCyclic) cellClass = "bg-blue-500/10 border border-blue-500/20 text-blue-200";
+                    else if (hasOneTime) cellClass = "bg-purple-500/10 border border-purple-500/20 text-purple-200";
+                    if (isSelected) cellClass = "bg-[#3b82f6] text-white shadow-lg shadow-blue-500/50 scale-105 z-10 font-bold";
+                    return ( <button key={day} onClick={() => { const d = new Date(viewDate.getFullYear(), viewDate.getMonth(), day); onSelectDate(d); }} className={`h-10 w-full rounded-xl flex items-center justify-center relative active:scale-95 transition-all ${cellClass}`}><span className="text-sm font-medium">{day}</span></button> );
                 })}
             </div>
         </div>
@@ -694,21 +635,18 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
     }, [isOpen, initialDate]);
     if (!isOpen) return null;
     const handleSave = async () => {
-        if (type === 'CYCLIC_WEEKLY' && selectedDays.length === 0) return;
         setIsSaving(true);
         const finalStart = isAllDay ? "00:00" : start;
         const finalEnd = isAllDay ? "23:59" : end;
-        const commonData = { type, description, startTimeLocal: finalStart, endTimeLocal: finalEnd };
         if (type === 'CYCLIC_WEEKLY') {
-            for (const day of selectedDays) await addSlot({ ...commonData, dayOfWeek: day });
+            for (const day of selectedDays) await addSlot({ type, description, dayOfWeek: day, startTimeLocal: finalStart, endTimeLocal: finalEnd });
         } else {
             const startD = new Date(`${date}T${finalStart}:00`);
             const endD = new Date(`${date}T${finalEnd}:00`);
-            await addSlot({ ...commonData, startAt: startD.toISOString(), endAt: endD.toISOString() });
+            await addSlot({ type, description, startAt: startD.toISOString(), endAt: endD.toISOString(), startTimeLocal: finalStart, endTimeLocal: finalEnd });
         }
         setIsSaving(false); onClose();
     };
-    const toggleDay = (dayIndex: number) => { setSelectedDays(prev => prev.includes(dayIndex) ? prev.filter(d => d !== dayIndex) : [...prev, dayIndex]); };
     const daysLabels = lang === 'ru' ? ['В','П','В','С','Ч','П','С'] : ['S','M','T','W','T','F','S'];
     return (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-end justify-center">
@@ -717,37 +655,43 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
                 <div className="flex bg-[#27272a] p-1 rounded-lg mb-6"><button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'ONE_TIME' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('one_time_btn')}</button><button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('weekly_btn')}</button></div>
                 <div className="space-y-6 mb-8">
                     {type === 'CYCLIC_WEEKLY' ? (
-                        <div><label className="block text-xs text-gray-500 mb-3">{t('day_of_week')}</label><div className="flex justify-between">{daysLabels.map((d, i) => (<button key={i} onClick={() => toggleDay(i)} className={`w-10 h-10 rounded-full text-sm font-bold transition-all ${selectedDays.includes(i) ? 'bg-[#3b82f6] text-white scale-110' : 'bg-[#27272a] text-gray-400'}`}>{d}</button>))}</div></div>
+                        <div><label className="block text-xs text-gray-500 mb-3">{t('day_of_week')}</label><div className="flex justify-between">{daysLabels.map((d, i) => (<button key={i} onClick={() => setSelectedDays(prev => prev.includes(i) ? prev.filter(day => day !== i) : [...prev, i])} className={`w-10 h-10 rounded-full text-sm font-bold transition-all ${selectedDays.includes(i) ? 'bg-[#3b82f6] text-white' : 'bg-[#27272a] text-gray-400'}`}>{d}</button>))}</div></div>
                     ) : ( <div><label className="block text-xs text-gray-500 mb-1">{t('date')}</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white outline-none focus:ring-1 focus:ring-blue-500" /></div> )}
                     <div>
                         <div className="flex justify-between items-center mb-2"><label className="text-xs text-gray-500">{t('from')} / {t('to')}</label><label className="flex items-center gap-2 cursor-pointer"><span className="text-xs text-gray-400">{t('all_day')}</span><div onClick={() => setIsAllDay(!isAllDay)} className={`w-10 h-5 rounded-full relative transition-colors ${isAllDay ? 'bg-blue-500' : 'bg-gray-600'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isAllDay ? 'left-6' : 'left-1'}`}></div></div></label></div>
-                        {!isAllDay && ( <div className="flex gap-4"><div className="flex-1"><input type="time" value={start} onChange={e => setStart(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white outline-none focus:ring-1 focus:ring-blue-500" /></div><div className="flex-1"><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white outline-none focus:ring-1 focus:ring-blue-500" /></div></div> )}
-                        {isAllDay && <div className="w-full bg-[#27272a]/50 p-3 rounded-lg text-center text-gray-500 text-sm italic border border-gray-700">00:00 — 23:59</div>}
+                        {!isAllDay && ( <div className="flex gap-4"><input type="time" value={start} onChange={e => setStart(e.target.value)} className="flex-1 bg-[#27272a] p-3 rounded-lg text-white" /><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="flex-1 bg-[#27272a] p-3 rounded-lg text-white" /></div> )}
                     </div>
-                    <div><label className="block text-xs text-gray-500 mb-1">{t('description')}</label><input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="..." className="w-full bg-[#27272a] p-3 rounded-lg text-white outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" /></div>
+                    <div><label className="block text-xs text-gray-500 mb-1">{t('description')}</label><input type="text" value={description} onChange={e => setDescription(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white" /></div>
                 </div>
-                <button disabled={isSaving || (type === 'CYCLIC_WEEKLY' && selectedDays.length === 0)} onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold text-lg active:scale-95 transition disabled:opacity-50 disabled:scale-100 shadow-xl shadow-blue-500/20 mb-4">{isSaving ? '...' : t('save_availability')}</button>
+                <button disabled={isSaving} onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold">{isSaving ? '...' : t('save_availability')}</button>
             </div>
         </div>
     );
 };
-// MySlotsScreen, SearchScreen, SettingsScreen ... (Reused from previous, ensuring no changes needed there)
+
 const MySlotsScreen = () => {
     const { mySlots, removeSlot, t, lang } = useContext(AppContext)!;
     const [isModalOpen, setModalOpen] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
-    const dailySlots = mySlots.filter(slot => { if (slot.type === 'CYCLIC_WEEKLY') return slot.dayOfWeek === selectedDate.getDay(); if (slot.type === 'ONE_TIME' && slot.startAt) { const slotDate = new Date(slot.startAt); return slotDate.getDate() === selectedDate.getDate() && slotDate.getMonth() === selectedDate.getMonth() && slotDate.getFullYear() === selectedDate.getFullYear(); } return false; });
+    const dailySlots = mySlots.filter(slot => { 
+        if (slot.type === 'CYCLIC_WEEKLY') return slot.dayOfWeek === selectedDate.getDay(); 
+        if (slot.type === 'ONE_TIME' && slot.startAt) { 
+            const d = new Date(slot.startAt); 
+            return d.getDate() === selectedDate.getDate() && d.getMonth() === selectedDate.getMonth(); 
+        } 
+        return false; 
+    });
     return (
         <div className="p-4 pb-24">
-            <div className="bg-gradient-to-br from-blue-900/40 to-purple-900/40 p-4 rounded-xl mb-6 border border-blue-500/20"><h3 className="font-bold text-blue-100 mb-1">{t('keep_updated')}</h3><p className="text-xs text-blue-200/70">{t('keep_updated_desc')}</p></div>
             <MiniCalendar mySlots={mySlots} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">{t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}</h2>
-            {dailySlots.length === 0 ? ( <div className="text-center py-6 opacity-50 border border-dashed border-gray-700 rounded-xl"><i className="fa-solid fa-mug-hot text-2xl mb-2 text-gray-600"></i><p className="text-sm">{t('free_bird')}</p></div> ) : dailySlots.map(slot => <SlotCard key={slot.id} slot={slot} onDelete={() => removeSlot(slot.id)} />)}
-            <button onClick={() => setModalOpen(true)} className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-lg shadow-blue-500/30 flex items-center justify-center active:scale-90 transition z-40"><i className="fa-solid fa-plus text-xl"></i></button>
+            {dailySlots.length === 0 ? ( <div className="text-center py-6 opacity-50 border border-dashed border-gray-700 rounded-xl"><p className="text-sm">{t('free_bird')}</p></div> ) : dailySlots.map(slot => <SlotCard key={slot.id} slot={slot} onDelete={() => removeSlot(slot.id)} />)}
+            <button onClick={() => setModalOpen(true)} className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center z-40"><i className="fa-solid fa-plus text-xl"></i></button>
             <AddSlotModal isOpen={isModalOpen} onClose={() => setModalOpen(false)} initialDate={selectedDate} />
         </div>
     );
 };
+
 const SearchScreen = () => {
     const { group, allSlots, t, lang } = useContext(AppContext)!;
     const [results, setResults] = useState<{ start: Date, end: Date, durationMinutes: number }[] | null>(null);
@@ -755,160 +699,53 @@ const SearchScreen = () => {
     const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
     useEffect(() => { if (group) setSelectedMembers(group.members.map(m => m.id)); }, [group]);
     if (!group) return null;
-    const handleSearch = () => { setLoading(true); setTimeout(() => { const commonTime = TimeFinderService.findCommonFreeTime(group, allSlots, selectedMembers); setResults(commonTime); setLoading(false); }, 800); };
-    const toggleMember = (id: number) => { setSelectedMembers(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]); };
-    const toggleAll = () => { if (selectedMembers.length === group.members.length) setSelectedMembers([]); else setSelectedMembers(group.members.map(m => m.id)); };
+    const handleSearch = () => { setLoading(true); setTimeout(() => { setResults(TimeFinderService.findCommonFreeTime(group, allSlots, selectedMembers)); setLoading(false); }, 800); };
     return (
         <div className="p-4 pb-24 h-full">
             {!results && !loading && (
                 <div className="flex flex-col h-full">
-                    <div className="mb-6 slide-in"><div className="flex justify-between items-center mb-2"><h3 className="text-sm font-bold uppercase text-gray-500">{t('select_members')}</h3><button onClick={toggleAll} className="text-xs text-[#3b82f6] font-bold">{t('select_all')}</button></div><div className="bg-[#27272a] rounded-xl overflow-hidden max-h-48 overflow-y-auto">{group.members.map(m => { const isSelected = selectedMembers.includes(m.id); return ( <div key={m.id} onClick={() => toggleMember(m.id)} className="p-3 border-b border-gray-700 last:border-0 flex items-center gap-3 active:bg-white/5 transition cursor-pointer"><div className={`w-5 h-5 rounded border flex items-center justify-center transition ${isSelected ? 'bg-[#3b82f6] border-[#3b82f6]' : 'border-gray-500'}`}>{isSelected && <i className="fa-solid fa-check text-white text-xs"></i>}</div><span className="text-sm">{m.firstName}</span></div> ) })}</div></div>
-                    <div className="flex-1 flex flex-col items-center justify-center text-center"><div className="w-20 h-20 bg-[#27272a] rounded-full flex items-center justify-center mb-6 shadow-lg shadow-yellow-500/10"><i className="fa-solid fa-wand-magic-sparkles text-3xl text-yellow-500"></i></div><h2 className="text-xl font-bold mb-2">{t('find_time')}</h2><p className="text-gray-400 text-sm max-w-xs mb-8">{t('algo_desc', selectedMembers.length, PLAN_CONFIGS[group.tier].searchWindowDays)}</p><button disabled={selectedMembers.length < 2} onClick={handleSearch} className="bg-white text-black px-8 py-3 rounded-full font-bold shadow-lg active:scale-95 transition disabled:opacity-50 disabled:scale-100">{t('find_magic_slot')}</button></div>
+                    <div className="mb-6"><div className="bg-[#27272a] rounded-xl overflow-hidden max-h-48 overflow-y-auto">{group.members.map(m => ( <div key={m.id} onClick={() => setSelectedMembers(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])} className="p-3 border-b border-gray-700 flex items-center gap-3"><div className={`w-5 h-5 rounded border flex items-center justify-center ${selectedMembers.includes(m.id) ? 'bg-[#3b82f6] border-[#3b82f6]' : 'border-gray-500'}`}>{selectedMembers.includes(m.id) && <i className="fa-solid fa-check text-white text-xs"></i>}</div><span>{m.firstName}</span></div> ))}</div></div>
+                    <div className="flex-1 flex flex-col items-center justify-center text-center"><h2 className="text-xl font-bold mb-2">{t('find_time')}</h2><p className="text-gray-400 text-sm mb-8">{t('algo_desc', selectedMembers.length, PLAN_CONFIGS[group.tier].searchWindowDays)}</p><button onClick={handleSearch} className="bg-white text-black px-8 py-3 rounded-full font-bold">{t('find_magic_slot')}</button></div>
                 </div>
             )}
-            {loading && ( <div className="flex flex-col items-center justify-center h-[60vh]"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-[#3b82f6] mb-4"></i><p className="text-gray-400 animate-pulse">{t('calculating')}</p></div> )}
+            {loading && ( <div className="flex flex-col items-center justify-center h-[60vh]"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-[#3b82f6] mb-4"></i><p className="text-gray-400">{t('calculating')}</p></div> )}
             {results && (
                 <div className="slide-in">
-                    <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-xs text-[#3b82f6]">{t('reset')}</button></div>
-                    {results.length === 0 ? ( <div className="bg-red-900/20 border border-red-500/30 p-4 rounded-xl text-center"><p className="text-red-200">{t('no_common_time')}</p><p className="text-xs text-red-300/50 mt-1">{t('everyone_busy')}</p></div> ) : ( <div className="space-y-3">{results.slice(0, 5).map((res, i) => ( <div key={i} className="bg-[#27272a] p-4 rounded-xl flex items-center gap-4 border-l-4 border-green-500"><div className="bg-green-500/20 w-12 h-12 rounded-lg flex flex-col items-center justify-center text-green-400"><span className="text-[10px] font-bold uppercase">{res.start.toLocaleDateString(lang, {weekday: 'short'})}</span><span className="text-sm font-bold">{res.start.getDate()}</span></div><div><div className="font-bold text-lg">{res.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} - {res.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div><div className="text-xs text-gray-500">{Math.floor(res.durationMinutes / 60)}h {res.durationMinutes % 60}m {t('duration')}</div></div></div> ))}</div> )}
-                    <div className="mt-8 p-4 border border-dashed border-gray-700 rounded-xl text-center opacity-70"><i className="fa-solid fa-lock text-gray-500 mb-2"></i><p className="text-sm text-gray-400">{t('pro_upsell')}</p></div>
+                    <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-[#3b82f6]">{t('reset')}</button></div>
+                    {results.length === 0 ? ( <div className="bg-red-900/20 p-4 rounded-xl text-center"><p className="text-red-200">{t('no_common_time')}</p></div> ) : ( <div className="space-y-3">{results.slice(0, 5).map((res, i) => ( <div key={i} className="bg-[#27272a] p-4 rounded-xl flex items-center gap-4 border-l-4 border-green-500"><div><div className="font-bold text-lg">{res.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} - {res.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div><div className="text-xs text-gray-500">{Math.floor(res.durationMinutes / 60)}h {res.durationMinutes % 60}m {t('duration')}</div></div></div> ))}</div> )}
                 </div>
             )}
         </div>
     );
 };
+
 const SettingsScreen = () => {
     const { group, user, t, createNewGroup, leaveGroup, logs, forceGroupLoad } = useContext(AppContext)!;
-    const [copied, setCopied] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
     const [forceId, setForceId] = useState('');
-
     if (!group) return null;
     const inviteLink = `https://t.me/${BOT_USERNAME}/app?startapp=gid_${group.id}`;
-    const handleCopy = () => { navigator.clipboard.writeText(inviteLink); setCopied(true); setTimeout(() => setCopied(false), 2000); };
-    const handleShare = () => { const text = `Join my group "${group.title}" in FreeTime!`; const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`; if (window.Telegram?.WebApp?.openTelegramLink) { window.Telegram.WebApp.openTelegramLink(shareUrl); } else { window.open(shareUrl, '_blank'); } };
-    
     return (
         <div className="p-4 pb-20 overflow-y-auto h-full">
             <h2 className="text-xl font-bold mb-6">{t('settings')}</h2>
-            <div className="bg-gradient-to-r from-[#3b82f6] to-[#2563eb] rounded-xl p-5 mb-6 shadow-lg shadow-blue-900/20"><h3 className="font-bold text-white text-lg mb-1 flex items-center gap-2"><i className="fa-solid fa-user-plus"></i> {t('invite_friends')}</h3><p className="text-blue-100 text-xs mb-4">{t('invite_desc')}</p><button onClick={handleShare} className="w-full bg-white text-blue-600 py-3 rounded-lg font-bold text-sm mb-3 shadow-md active:scale-95 transition flex items-center justify-center gap-2"><i className="fa-solid fa-paper-plane"></i> {t('share')}</button><div className="flex gap-2"><div className="bg-black/20 flex-1 rounded px-3 py-2 text-xs font-mono text-blue-100 truncate flex items-center border border-white/10">{inviteLink}</div><button onClick={handleCopy} className="bg-white/20 text-white px-3 py-2 rounded font-bold text-xs active:scale-95 transition hover:bg-white/30">{copied ? <i className="fa-solid fa-check"></i> : <i className="fa-regular fa-copy"></i>}</button></div></div>
-            <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6"><div className="p-4 border-b border-gray-700 flex justify-between items-center"><span>{t('timezone')}</span><span className="text-gray-400 text-sm">{user.timezone}</span></div><div className="p-4 flex justify-between items-center"><span>{t('my_name')}</span><span className="text-gray-400 text-sm">@{user.username}</span></div></div>
-            <div className="flex justify-between items-center mb-2 px-1"><h3 className="text-sm font-bold text-gray-500 uppercase">{t('group_label')}: {group.title}</h3><span className="text-[10px] text-gray-600 font-mono">ID: {group.id}</span></div>
-            <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6">{group.members.map(m => ( <div key={m.id} className="p-4 border-b border-gray-700 last:border-0 flex items-center gap-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${m.id === user.id ? 'bg-[#3b82f6] text-white' : 'bg-gray-700 text-gray-300'}`}>{m.firstName ? m.firstName[0] : '?'}</div><div className="flex-1"><div className="text-sm">{m.firstName} {m.id === user.id && t('you')}</div><div className="text-[10px] text-gray-500">@{m.username}</div></div></div> ))}</div>
-            <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 text-sm font-bold bg-[#27272a] rounded-xl border border-dashed border-gray-700 hover:bg-[#323236] transition"><i className="fa-solid fa-plus mr-2"></i> {t('create_group')}</button>
-            <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 text-sm font-bold bg-[#27272a] rounded-xl hover:bg-[#323236] transition">{t('leave_group')}</button>
-            <div className="text-center mt-6 text-xs text-gray-600">FreeTime v1.0.7 (Beta)</div>
-            
-            <div className="mt-8 pt-4 border-t border-gray-800 text-center">
-                <button onClick={() => setShowDebug(true)} className="text-xs text-yellow-600 font-mono flex items-center justify-center gap-2 mx-auto">
-                    <i className="fa-solid fa-bug"></i> Show Debug Logs
-                </button>
-            </div>
-
-            {showDebug && (
-                <div className="fixed inset-0 z-[100] bg-black/95 p-6 overflow-y-auto text-left font-mono text-xs">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-green-500 font-bold">Debug Console</h3>
-                        <button onClick={() => setShowDebug(false)} className="text-white p-2">✕</button>
-                    </div>
-                    <div className="mb-4 flex gap-2">
-                        <input type="number" placeholder="Force Group ID (e.g. -100...)" className="flex-1 bg-gray-800 text-white p-2 rounded border border-gray-700" value={forceId} onChange={e => setForceId(e.target.value)} />
-                        <button onClick={() => { if(forceId) forceGroupLoad(parseInt(forceId)); }} className="bg-yellow-600 text-black font-bold px-3 py-2 rounded">Load</button>
-                    </div>
-                    {logs.map((l, i) => <div key={i} className="mb-1 border-b border-gray-800 pb-1 text-gray-300">{l}</div>)}
-                </div>
-            )}
+            <div className="bg-gradient-to-r from-[#3b82f6] to-[#2563eb] rounded-xl p-5 mb-6"><h3 className="font-bold text-white mb-4"><i className="fa-solid fa-user-plus"></i> {t('invite_friends')}</h3><button onClick={() => window.Telegram?.WebApp?.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteLink)}`)} className="w-full bg-white text-blue-600 py-3 rounded-lg font-bold text-sm">{t('share')}</button></div>
+            <div className="bg-[#27272a] rounded-xl overflow-hidden mb-6"><div className="p-4 border-b border-gray-700 flex justify-between"><span>{t('timezone')}</span><span className="text-gray-400">{user.timezone}</span></div></div>
+            <button onClick={createNewGroup} className="w-full py-3 mb-3 text-blue-400 bg-[#27272a] rounded-xl border border-dashed border-gray-700">{t('create_group')}</button>
+            <button onClick={() => leaveGroup(group.id)} className="w-full py-3 text-red-500 bg-[#27272a] rounded-xl">{t('leave_group')}</button>
+            <button onClick={() => setShowDebug(!showDebug)} className="w-full py-3 mt-4 text-xs text-gray-600">🐞 Debug Logs</button>
+            {showDebug && ( <div className="fixed inset-0 z-[100] bg-black/95 p-6 overflow-y-auto font-mono text-[10px] text-gray-300"><div className="flex justify-between mb-4"><h3 className="text-green-500">Debug</h3><button onClick={() => setShowDebug(false)}>✕</button></div><div className="mb-4 flex gap-2"><input type="number" className="flex-1 bg-gray-800 p-2" value={forceId} onChange={e => setForceId(e.target.value)} /><button onClick={() => forceGroupLoad(parseInt(forceId))} className="bg-yellow-600 px-3">Load</button></div>{logs.map((l, i) => <div key={i} className="mb-1">{l}</div>)}</div> )}
         </div>
     );
 }
 
-// --- UPDATED EMPTY STATE WITH DEBUG CONSOLE ---
-
 const EmptyStateScreen = () => {
-    const { createNewGroup, t, logs, forceGroupLoad } = useContext(AppContext)!;
-    const [showSetup, setShowSetup] = useState(false);
-    const [showDebug, setShowDebug] = useState(false);
-    const [token, setToken] = useState('');
-    const [customUrl, setCustomUrl] = useState('');
-    const [generatedLink, setGeneratedLink] = useState('');
-    const [forceId, setForceId] = useState('');
-
-    const handleAddBot = () => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank');
-    const handleGenerate = () => {
-        const cleanToken = token.trim();
-        let origin = window.location.origin;
-
-        // Check for Localhost
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        
-        if (isLocal) {
-            if (!customUrl) {
-                alert("You are on localhost. Please enter your deployed Vercel URL (e.g. https://my-app.vercel.app)");
-                return;
-            }
-            origin = customUrl.replace(/\/$/, ""); // remove trailing slash
-        }
-
-        const link = `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${origin}/api/bot`;
-        setGeneratedLink(link);
-    };
-
-    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
+    const { createNewGroup, t } = useContext(AppContext)!;
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
-            <div className="w-24 h-24 bg-[#27272a] rounded-full flex items-center justify-center mb-6 shadow-lg shadow-blue-500/10">
-                <i className="fa-solid fa-user-group text-4xl text-[#3b82f6]"></i>
-            </div>
             <h1 className="text-2xl font-bold mb-2">{t('no_groups')}</h1>
-            <p className="text-gray-400 mb-8 max-w-xs">{t('no_groups_desc')}</p>
-            
-            <button onClick={handleAddBot} className="w-full max-w-xs bg-[#3b82f6] text-white py-3 rounded-xl font-bold mb-4 shadow-lg active:scale-95 transition">
-                {t('add_to_group_btn')}
-            </button>
-            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold p-2 mb-8">
-                {t('create_group')} (Personal)
-            </button>
-
-            <div className="w-full max-w-xs border-t border-gray-800 pt-6 mt-6 flex justify-center gap-4">
-                <button onClick={() => setShowSetup(!showSetup)} className="text-xs text-gray-600 hover:text-gray-400">
-                    <i className="fa-solid fa-wrench"></i> Setup Webhook
-                </button>
-                <button onClick={() => setShowDebug(!showDebug)} className="text-xs text-yellow-600 hover:text-yellow-400">
-                    <i className="fa-solid fa-bug"></i> Debug Logs
-                </button>
-            </div>
-
-            {showDebug && (
-                <div className="fixed inset-0 z-50 bg-black/90 p-6 overflow-y-auto text-left font-mono text-xs">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-green-500 font-bold">Debug Console</h3>
-                        <button onClick={() => setShowDebug(false)} className="text-white p-2">✕</button>
-                    </div>
-                    <div className="mb-4 flex gap-2">
-                        <input type="number" placeholder="Force Group ID (e.g. -100...)" className="flex-1 bg-gray-800 text-white p-2 rounded border border-gray-700" value={forceId} onChange={e => setForceId(e.target.value)} />
-                        <button onClick={() => { if(forceId) forceGroupLoad(parseInt(forceId)); }} className="bg-yellow-600 text-black font-bold px-3 py-2 rounded">Load</button>
-                    </div>
-                    {logs.map((l, i) => <div key={i} className="mb-1 border-b border-gray-800 pb-1 text-gray-300">{l}</div>)}
-                </div>
-            )}
-                
-            {showSetup && (
-                <div className="mt-4 bg-[#1e1e20] p-4 rounded-lg text-left slide-in border border-gray-700 w-full max-w-xs">
-                    <p className="text-[10px] text-gray-400 mb-2">Use this if the bot is silent in groups.</p>
-                    
-                    {isLocal && (
-                         <div className="mb-2">
-                            <label className="text-[10px] text-yellow-500 font-bold block mb-1">Localhost Detected! Enter Vercel URL:</label>
-                            <input type="text" placeholder="https://your-app.vercel.app" className="w-full bg-black/30 text-xs p-2 rounded border border-yellow-800 mb-1 text-white" value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} />
-                         </div>
-                    )}
-
-                    <input type="text" placeholder="Paste Bot Token here..." className="w-full bg-black/30 text-xs p-2 rounded border border-gray-700 mb-2 text-white" value={token} onChange={(e) => setToken(e.target.value)} />
-                    <button onClick={handleGenerate} className="w-full bg-gray-700 text-xs py-2 rounded text-white font-bold mb-2">Generate Link</button>
-                    {generatedLink && ( <a href={generatedLink} target="_blank" className="block text-center bg-green-600 text-white text-xs py-2 rounded font-bold">Click to Set Webhook</a> )}
-                </div>
-            )}
+            <p className="text-gray-400 mb-8">{t('no_groups_desc')}</p>
+            <button onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} className="w-full max-w-xs bg-[#3b82f6] text-white py-3 rounded-xl font-bold mb-4">{t('add_to_group_btn')}</button>
+            <button onClick={createNewGroup} className="text-[#3b82f6] text-sm font-bold">{t('create_group')}</button>
         </div>
     )
 }
@@ -916,37 +753,20 @@ const EmptyStateScreen = () => {
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('slots');
   const context = useContext(AppContext);
-
-  if (context?.error) return <div className="min-h-screen bg-[#18181b] text-white flex flex-col items-center justify-center p-8 text-center"><i className="fa-solid fa-triangle-exclamation text-4xl mb-4 text-red-500"></i><h1 className="text-xl font-bold mb-2">Setup Error</h1><p className="text-red-200 text-sm mb-6 bg-red-900/20 p-4 rounded-lg border border-red-500/30">{context.error}</p></div>
+  if (context?.error) return <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-8 text-center text-white"><h1 className="text-xl font-bold mb-4">Error</h1><p className="bg-red-900/20 p-4 rounded border border-red-500/30 text-red-200">{context.error}</p></div>
   if (context?.isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>
-
   if (!context?.group) return <EmptyStateScreen />;
-
-  const renderScreen = () => {
-      switch(activeTab) {
-          case 'slots': return <MySlotsScreen />;
-          case 'search': return <SearchScreen />;
-          case 'settings': return <SettingsScreen />;
-          default: return <MySlotsScreen />;
-      }
-  }
-
   return (
     <div className="min-h-screen bg-[#18181b] text-white">
       <Header />
-      <main>{renderScreen()}</main>
+      <main>{activeTab === 'slots' ? <MySlotsScreen /> : activeTab === 'search' ? <SearchScreen /> : <SettingsScreen />}</main>
       <TabBar active={activeTab} setTab={setActiveTab} />
     </div>
   );
 };
 
 const App = () => {
-    useEffect(() => {
-        if (window.Telegram?.WebApp) {
-            window.Telegram.WebApp.ready();
-            window.Telegram.WebApp.expand();
-        }
-    }, []);
+    useEffect(() => { if (window.Telegram?.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } }, []);
     return <AppProvider><AppContent /></AppProvider>;
 };
 
