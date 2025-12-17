@@ -84,11 +84,12 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
 
 bot.start(async (ctx) => {
     if (ctx.chat.type !== 'private') return;
-    await ctx.reply('Привет! 👋\nЯ помогу вашей группе выбрать время для встречи.\n\nДобавьте меня в группу, и я создам общий календарь!', {
+    await ctx.reply('Привет! 👋\nЯ помогу вашей группе выбрать время для встречи.\n\nДля авторизации и настройки просто открой наше приложение ниже — вход произойдет автоматически!', {
         reply_markup: {
-            inline_keyboard: [[
-                { text: '➕ Добавить в группу', url: `https://t.me/${ctx.botInfo.username}?startgroup=true` }
-            ]]
+            inline_keyboard: [
+                [{ text: '🚀 Открыть Приложение', web_app: { url: WEB_APP_BASE } }],
+                [{ text: '➕ Добавить в группу', url: `https://t.me/${ctx.botInfo.username}?startgroup=true` }]
+            ]
         }
     });
 });
@@ -99,7 +100,7 @@ bot.command('find', async (ctx) => {
 
     const chatId = ctx.chat.id;
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
-    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников календаря. Откройте приложение, чтобы зарегистрироваться.');
+    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников календаря. Открой приложение ниже, чтобы зарегистрироваться автоматически.');
 
     const { data: slots } = await supabase.from('slots').select('*').eq('group_id', chatId);
     const results = findIntersections(members, slots || []);
@@ -145,7 +146,7 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
         await supabase.from('groups').upsert({ id: chatId, title: chatTitle, tier: 'FREE' }, { onConflict: 'id' });
         const appLink = `${WEB_APP_BASE}?gid=${chatId}`;
         await ctx.reply(
-            `🗓 <b>Календарь для "${chatTitle}" готов!</b>\n\nОтмечайте занятое время в приложении, а потом используйте команду /find для поиска встречи.`, 
+            `🗓 <b>Календарь для "${chatTitle}" готов!</b>\n\nОтмечайте занятое время в приложении (вход автоматический), а потом используйте команду /find для поиска встречи.`, 
             {
                 parse_mode: 'HTML',
                 reply_markup: {
