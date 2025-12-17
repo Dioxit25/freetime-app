@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_KEY;
-const BOT_USERNAME = 'TimeAgreeBot'; // Убедитесь, что это совпадает с вашим ботом
+const BOT_USERNAME = 'TimeAgreeBot'; 
 
 // --- TYPES ---
 
@@ -95,7 +95,8 @@ const TRANSLATIONS = {
     switch_group_title: "My Groups",
     no_groups: "No Groups Yet",
     no_groups_desc: "Add the bot to a Telegram group to get started!",
-    add_to_group_btn: "Add Bot to Group"
+    add_to_group_btn: "Add Bot to Group",
+    open_in_tg: "Open as Mini App"
   },
   ru: {
     app_name: "TimeAgree",
@@ -135,7 +136,8 @@ const TRANSLATIONS = {
     switch_group_title: "Мои группы",
     no_groups: "Нет групп",
     no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
-    add_to_group_btn: "Добавить бота в группу"
+    add_to_group_btn: "Добавить бота в группу",
+    open_in_tg: "Открыть Mini App"
   }
 };
 
@@ -201,7 +203,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       let tgUserRaw = externalUser || window.Telegram?.WebApp?.initDataUnsafe?.user;
 
-      // Если нет данных от WebApp, проверяем localStorage
       if (!tgUserRaw) {
         const saved = localStorage.getItem('tg_user_session');
         if (saved) {
@@ -229,7 +230,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         photoUrl: tgUserRaw.photo_url
       };
 
-      // Sync with Supabase
       const { error: userError } = await supabase.from('users').upsert({
         id: currentUser.id,
         username: currentUser.username,
@@ -242,7 +242,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setUser(currentUser);
       localStorage.setItem('tg_user_session', JSON.stringify(tgUserRaw));
 
-      // Handle Group from URL
       const urlParams = new URLSearchParams(window.location.search);
       let targetGroupId: number | null = null;
       const qGid = urlParams.get('gid');
@@ -250,7 +249,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           targetGroupId = parseInt(qGid);
           await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
       } else {
-          // Check for startapp
           const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
           if (startParam?.startsWith('gid_')) targetGroupId = parseInt(startParam.split('_')[1]);
       }
@@ -357,7 +355,6 @@ const LoginScreen = () => {
     const { onAuthSuccess, t } = useContext(AppContext)!;
     
     useEffect(() => {
-        // Динамически вставляем виджет Telegram
         const script = document.createElement('script');
         script.src = 'https://telegram.org/js/telegram-widget.js?22';
         script.setAttribute('data-telegram-login', BOT_USERNAME);
@@ -367,14 +364,19 @@ const LoginScreen = () => {
         script.setAttribute('data-request-access', 'write');
         script.async = true;
         
-        // Глобальный коллбэк для виджета
         (window as any).onTelegramAuth = (user: any) => {
             onAuthSuccess(user);
         };
         
         document.getElementById('tg-login-container')?.appendChild(script);
-        return () => { delete (window as any).onTelegramAuth; };
-    }, []);
+        return () => { 
+            delete (window as any).onTelegramAuth; 
+        };
+    }, [onAuthSuccess]);
+
+    const openInTg = () => {
+        window.open(`https://t.me/${BOT_USERNAME}/app`, '_blank');
+    };
 
     return (
         <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-6 text-center text-white">
@@ -383,7 +385,17 @@ const LoginScreen = () => {
             </div>
             <h1 className="text-2xl font-bold mb-2">{t('login_welcome')}</h1>
             <p className="text-gray-400 mb-10 text-sm max-w-xs">{t('login_desc')}</p>
-            <div id="tg-login-container" className="min-h-[50px]"></div>
+            
+            <div id="tg-login-container" className="min-h-[50px] mb-4"></div>
+            
+            <button 
+                onClick={openInTg}
+                className="mt-4 px-6 py-3 bg-[#27272a] rounded-xl text-sm font-medium border border-gray-700 hover:bg-gray-800 transition"
+            >
+                <i className="fa-solid fa-up-right-from-square mr-2"></i>
+                {t('open_in_tg')}
+            </button>
+            
             <p className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">Secure via Telegram Auth</p>
         </div>
     );
