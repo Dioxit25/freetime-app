@@ -354,7 +354,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 // --- AUTH SCREEN ---
 
 const LoginScreen = () => {
-    const { onAuthSuccess, t, lang } = useContext(AppContext)!;
+    const { onAuthSuccess, t } = useContext(AppContext)!;
     
     useEffect(() => {
         // Динамически вставляем виджет Telegram
@@ -486,7 +486,7 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
 };
 
 const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClose: () => void, initialDate: Date }) => {
-    const { addSlot, t, lang } = useContext(AppContext)!;
+    const { addSlot, t } = useContext(AppContext)!;
     const [type, setType] = useState<SlotType>('ONE_TIME');
     const [start, setStart] = useState("09:00");
     const [end, setEnd] = useState("18:00");
