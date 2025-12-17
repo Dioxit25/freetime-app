@@ -59,8 +59,8 @@ interface TimeSlot {
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
-    login_welcome: "Welcome to TimeAgree!",
-    login_desc: "Log in with Telegram to sync your availability with your groups.",
+    login_welcome: "Open via Telegram",
+    login_desc: "Authorization happens automatically when you open the Mini App inside Telegram.",
     logout: "Logout",
     upgrade: "UPGRADE",
     my_slots: "My Slots",
@@ -99,12 +99,12 @@ const TRANSLATIONS = {
     no_groups: "No Groups Yet",
     no_groups_desc: "Add the bot to a Telegram group to get started!",
     add_to_group_btn: "Add Bot to Group",
-    open_in_tg: "Open as Mini App"
+    open_in_tg: "Go to Bot"
   },
   ru: {
     app_name: "TimeAgree",
-    login_welcome: "Добро пожаловать!",
-    login_desc: "Авторизуйтесь через Telegram, чтобы синхронизировать свои слоты с группами.",
+    login_welcome: "Откройте в Telegram",
+    login_desc: "Авторизация происходит автоматически при открытии приложения через бота в Telegram.",
     logout: "Выйти",
     upgrade: "PREMIUM",
     my_slots: "Мои слоты",
@@ -143,7 +143,7 @@ const TRANSLATIONS = {
     no_groups: "Нет групп",
     no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
     add_to_group_btn: "Добавить бота в группу",
-    open_in_tg: "Открыть Mini App"
+    open_in_tg: "Перейти к боту"
   }
 };
 
@@ -205,10 +205,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       addLog("Initializing...");
       setIsLoading(true);
 
-      // 1. Try to get user from Telegram WebApp context
+      // 1. Get user directly from Telegram WebApp
       let tgUserRaw = externalUser || window.Telegram?.WebApp?.initDataUnsafe?.user;
 
-      // 2. If not found, check localStorage
+      // 2. Fallback to localStorage for debug/persistence
       if (!tgUserRaw) {
         const saved = localStorage.getItem('tg_user_session');
         if (saved) {
@@ -217,9 +217,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }
       }
 
-      // 3. If still not found, trigger Auth Screen
+      // 3. If still no user, we can't do anything
       if (!tgUserRaw) {
-        addLog("No user detected. Auth required.");
+        addLog("No user detected. Auth required via TG.");
         setIsAuthRequired(true);
         setIsLoading(false);
         return;
@@ -314,7 +314,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const onAuthSuccess = (tgUser: any) => {
-      addLog("Login Success!");
+      addLog("External Auth Data received");
       initApp(tgUser);
   };
 
@@ -327,7 +327,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (!user || !group) return;
     const items = Array.isArray(payload) ? payload : [payload];
     const dataToInsert = items.map(slot => {
-        // Construct object without ID if it doesn't exist to avoid Supabase NOT NULL constraint error on insert
         const obj: any = {
             user_id: user.id, 
             group_id: group.id, 
@@ -386,30 +385,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 // --- AUTH SCREEN ---
 
 const LoginScreen = () => {
-    const { onAuthSuccess, t } = useContext(AppContext)!;
+    const { t } = useContext(AppContext)!;
     
-    useEffect(() => {
-        const script = document.createElement('script');
-        script.src = 'https://telegram.org/js/telegram-widget.js?22';
-        script.setAttribute('data-telegram-login', BOT_USERNAME);
-        script.setAttribute('data-size', 'large');
-        script.setAttribute('data-radius', '12');
-        script.setAttribute('data-onauth', 'onTelegramAuth(user)');
-        script.setAttribute('data-request-access', 'write');
-        script.async = true;
-        
-        (window as any).onTelegramAuth = (user: any) => {
-            onAuthSuccess(user);
-        };
-        
-        document.getElementById('tg-login-container')?.appendChild(script);
-        return () => { 
-            delete (window as any).onTelegramAuth; 
-        };
-    }, [onAuthSuccess]);
-
-    const openInTg = () => {
-        window.open(`https://t.me/${BOT_USERNAME}/app`, '_blank');
+    const openBot = () => {
+        window.open(`https://t.me/${BOT_USERNAME}`, '_blank');
     };
 
     return (
@@ -420,17 +399,14 @@ const LoginScreen = () => {
             <h1 className="text-2xl font-bold mb-2">{t('login_welcome')}</h1>
             <p className="text-gray-400 mb-10 text-sm max-w-xs">{t('login_desc')}</p>
             
-            <div id="tg-login-container" className="min-h-[50px] mb-4"></div>
-            
             <button 
-                onClick={openInTg}
-                className="mt-4 px-6 py-3 bg-[#27272a] rounded-xl text-sm font-medium border border-gray-700 hover:bg-gray-800 transition"
+                onClick={openBot}
+                className="px-8 py-4 bg-blue-500 rounded-2xl text-base font-bold shadow-lg shadow-blue-500/20 hover:bg-blue-600 transition active:scale-95"
             >
-                <i className="fa-solid fa-up-right-from-square mr-2"></i>
                 {t('open_in_tg')}
             </button>
             
-            <p className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">Secure via Telegram Auth</p>
+            <p className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">Automatic login via Telegram Mini App</p>
         </div>
     );
 };
