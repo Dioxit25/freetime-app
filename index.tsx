@@ -73,6 +73,7 @@ const TRANSLATIONS = {
     weekly_btn: "Weekly",
     one_time_btn: "One Time",
     i_am_busy: "I am busy...",
+    edit_slot: "Edit Busy Slot",
     save_availability: "Save Availability",
     day_of_week: "Days of Week",
     date: "Date",
@@ -92,7 +93,7 @@ const TRANSLATIONS = {
     timezone: "Timezone",
     invite_friends: "Invite Friends",
     share: "Share to Chat",
-    create_group: "Create New Group",
+    create_group_btn: "Add Bot to New Group",
     switch_group_title: "My Groups",
     no_groups: "No Groups Yet",
     no_groups_desc: "Add the bot to a Telegram group to get started!",
@@ -115,6 +116,7 @@ const TRANSLATIONS = {
     weekly_btn: "Каждую неделю",
     one_time_btn: "Один раз",
     i_am_busy: "Я занят...",
+    edit_slot: "Редактировать",
     save_availability: "Сохранить",
     day_of_week: "Дни недели",
     date: "Дата",
@@ -134,7 +136,7 @@ const TRANSLATIONS = {
     timezone: "Часовой пояс",
     invite_friends: "Пригласить друзей",
     share: "Отправить в чат",
-    create_group: "Создать новую группу",
+    create_group_btn: "Добавить в новую группу",
     switch_group_title: "Мои группы",
     no_groups: "Нет групп",
     no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
@@ -165,13 +167,11 @@ interface AppState {
   error: string | null;
   logs: string[];
   t: (key: string, ...args: any[]) => string;
-  addSlot: (slot: Partial<BusySlot> | Partial<BusySlot>[]) => Promise<void>;
+  saveSlot: (slot: Partial<BusySlot> | Partial<BusySlot>[]) => Promise<void>;
   removeSlot: (id: string) => void;
   refreshData: () => void;
-  createNewGroup: () => void;
   switchGroup: (groupId: number) => void;
   leaveGroup: (groupId: number) => void;
-  forceGroupLoad: (groupId: number) => Promise<void>;
   onAuthSuccess: (user: any) => void;
   logout: () => void;
 }
@@ -247,6 +247,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const urlParams = new URLSearchParams(window.location.search);
       let targetGroupId: number | null = null;
       const qGid = urlParams.get('gid');
+      
       if (qGid) {
           targetGroupId = parseInt(qGid);
           await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
@@ -313,16 +314,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       window.location.reload();
   };
 
-  const addSlot = async (payload: Partial<BusySlot> | Partial<BusySlot>[]) => {
+  const saveSlot = async (payload: Partial<BusySlot> | Partial<BusySlot>[]) => {
     if (!user || !group) return;
     const items = Array.isArray(payload) ? payload : [payload];
     const dataToInsert = items.map(slot => ({
+        id: slot.id,
         user_id: user.id, group_id: group.id, type: slot.type, description: slot.description,
         start_at: slot.startAt || null, end_at: slot.endAt || null,
         day_of_week: slot.dayOfWeek, start_time_local: slot.startTimeLocal, end_time_local: slot.endTimeLocal
     }));
     
-    const { error: insertError } = await supabase.from('slots').insert(dataToInsert);
+    const { error: insertError } = await supabase.from('slots').upsert(dataToInsert, { onConflict: 'id' });
     if (insertError) {
         alert("Save Error: " + insertError.message);
     } else {
@@ -354,9 +356,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <AppContext.Provider value={{ 
         user: user!, group, userGroups, allSlots, mySlots, lang, isLoading, isAuthRequired, error, logs,
-        t, addSlot, removeSlot, refreshData: () => group && fetchSlots(group.id), 
-        createNewGroup: () => {}, switchGroup, leaveGroup, forceGroupLoad: async () => {},
-        onAuthSuccess, logout
+        t, saveSlot, removeSlot, refreshData: () => group && fetchSlots(group.id), 
+        switchGroup, leaveGroup, onAuthSuccess, logout
     }}>
       {children}
     </AppContext.Provider>
@@ -425,19 +426,19 @@ const Header = () => {
         <div className="relative z-50">
             <div className="bg-[#27272a] p-4 flex justify-between items-center shadow-md relative z-20">
                 <div onClick={() => setMenuOpen(!isMenuOpen)} className="flex items-center gap-2 cursor-pointer active:opacity-70 max-w-[70%]">
-                    <div>
-                        <h1 className="text-lg font-bold text-white flex items-center gap-2 truncate">
+                    <div className="flex-1 min-w-0">
+                        <h1 className="text-base font-bold text-white flex items-center gap-2">
                             <span className="truncate">{group.title}</span> 
-                            <i className={`fa-solid fa-chevron-down text-xs transition ${isMenuOpen ? 'rotate-180' : ''}`}></i>
+                            <i className={`fa-solid fa-chevron-down text-[10px] transition ${isMenuOpen ? 'rotate-180' : ''}`}></i>
                         </h1>
-                        <p className="text-xs text-gray-400">{group.members.length} уч.</p>
+                        <p className="text-[10px] text-gray-400">{group.members.length} уч.</p>
                     </div>
                 </div>
             </div>
             {isMenuOpen && (
                 <>
                     <div className="fixed inset-0 bg-black/50 z-10" onClick={() => setMenuOpen(false)}></div>
-                    <div className="absolute top-full left-0 right-0 bg-[#27272a] border-t border-gray-700 shadow-2xl z-20 rounded-b-xl overflow-hidden slide-in">
+                    <div className="absolute top-full left-0 right-0 bg-[#27272a] border-t border-gray-700 shadow-2xl z-20 rounded-b-xl overflow-hidden slide-in max-h-[60vh] overflow-y-auto">
                         <div className="p-3 bg-black/20 text-xs font-bold text-gray-500 uppercase tracking-wider">{t('switch_group_title')}</div>
                         {userGroups.map(g => (
                             <button key={g.id} onClick={() => { switchGroup(g.id); setMenuOpen(false); }} className={`w-full text-left p-4 border-b border-gray-800 flex justify-between items-center ${g.id === group.id ? 'bg-[#3b82f6]/10 text-blue-400' : 'text-white'}`}>
@@ -463,15 +464,15 @@ const TabBar = ({ active, setTab }: { active: string, setTab: (t: string) => voi
   );
 };
 const TabButton = ({ icon, label, active, onClick }: any) => (
-  <button onClick={onClick} className={`flex flex-col items-center gap-1 w-1/3 ${active ? 'text-[#3b82f6]' : 'text-gray-500'}`}><i className={`fa-solid ${icon} text-xl`}></i><span className="text-[10px]">{label}</span></button>
+  <button onClick={onClick} className={`flex flex-col items-center gap-1 w-1/3 transition-all ${active ? 'text-[#3b82f6] scale-110' : 'text-gray-500'}`}><i className={`fa-solid ${icon} text-xl`}></i><span className="text-[10px]">{label}</span></button>
 );
 
-const SlotCard: React.FC<{ slot: BusySlot; onDelete: () => void }> = ({ slot, onDelete }) => {
+const SlotCard: React.FC<{ slot: BusySlot; onEdit: () => void }> = ({ slot, onEdit }) => {
     const { t, lang } = useContext(AppContext)!;
     const isCyclic = slot.type === 'CYCLIC_WEEKLY';
     const days = lang === 'ru' ? ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     return (
-        <div className="bg-[#27272a] p-3 rounded-lg mb-2 flex justify-between items-center border-l-4 border-red-500 slide-in">
+        <div onClick={onEdit} className="bg-[#27272a] p-3 rounded-lg mb-2 flex justify-between items-center border-l-4 border-red-500 slide-in cursor-pointer active:scale-[0.98] transition shadow-sm">
             <div className="flex-1">
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-white">{slot.description || (isCyclic ? t('weekly') : t('one_time'))}</span>
@@ -480,7 +481,7 @@ const SlotCard: React.FC<{ slot: BusySlot; onDelete: () => void }> = ({ slot, on
                     {isCyclic ? `${days[slot.dayOfWeek!]} • ${slot.startTimeLocal} - ${slot.endTimeLocal}` : `${new Date(slot.startAt!).toLocaleDateString(lang)} • ${new Date(slot.startAt!).toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}`}
                 </div>
             </div>
-            <button onClick={onDelete} className="text-red-400 p-2"><i className="fa-solid fa-trash-can"></i></button>
+            <i className="fa-solid fa-chevron-right text-gray-600 text-[10px]"></i>
         </div>
     )
 }
@@ -492,13 +493,13 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
     const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1).getDay();
     const daysLabels = lang === 'ru' ? ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'] : ['Su','Mo','Tu','We','Th','Fr','Sa'];
     return (
-        <div className="bg-[#27272a] rounded-xl p-4 mb-4 shadow-lg">
+        <div className="bg-[#27272a] rounded-xl p-4 mb-4 shadow-lg border border-white/5">
             <div className="flex justify-between items-center mb-4">
                 <button onClick={() => {const d = new Date(viewDate); d.setMonth(d.getMonth()-1); setViewDate(d);}} className="p-2 text-gray-400"><i className="fa-solid fa-chevron-left"></i></button>
-                <h3 className="font-bold text-lg capitalize">{viewDate.toLocaleDateString(lang, { month: 'long', year: 'numeric' })}</h3>
+                <h3 className="font-bold text-sm capitalize">{viewDate.toLocaleDateString(lang, { month: 'long', year: 'numeric' })}</h3>
                 <button onClick={() => {const d = new Date(viewDate); d.setMonth(d.getMonth()+1); setViewDate(d);}} className="p-2 text-gray-400"><i className="fa-solid fa-chevron-right"></i></button>
             </div>
-            <div className="grid grid-cols-7 mb-2 text-center">{daysLabels.map((d, i) => <div key={i} className="text-xs text-gray-500 font-bold">{d}</div>)}</div>
+            <div className="grid grid-cols-7 mb-2 text-center">{daysLabels.map((d, i) => <div key={i} className="text-[10px] text-gray-500 font-bold">{d}</div>)}</div>
             <div className="grid grid-cols-7 gap-1">
                 {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`}></div>)}
                 {Array.from({ length: daysInMonth }).map((_, i) => {
@@ -508,15 +509,15 @@ const MiniCalendar = ({ mySlots, selectedDate, onSelectDate }: { mySlots: BusySl
                     const dayOfWeek = d.getDay();
                     const dateStr = d.toISOString().split('T')[0];
                     const isBusy = mySlots.some(s => (s.type === 'CYCLIC_WEEKLY' && s.dayOfWeek === dayOfWeek) || (s.type === 'ONE_TIME' && s.startAt?.startsWith(dateStr)));
-                    return ( <button key={day} onClick={() => onSelectDate(d)} className={`h-10 w-full rounded-xl flex items-center justify-center relative ${isSelected ? 'bg-blue-500 text-white' : isBusy ? 'bg-red-500/10 text-red-200 border border-red-500/20' : 'text-gray-400'}`}><span className="text-sm">{day}</span></button> );
+                    return ( <button key={day} onClick={() => onSelectDate(d)} className={`h-10 w-full rounded-xl flex items-center justify-center relative ${isSelected ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : isBusy ? 'bg-red-500/10 text-red-200 border border-red-500/20' : 'text-gray-400 hover:bg-white/5'}`}><span className="text-sm font-medium">{day}</span></button> );
                 })}
             </div>
         </div>
     );
 };
 
-const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClose: () => void, initialDate: Date }) => {
-    const { addSlot, t, lang } = useContext(AppContext)!;
+const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: boolean, onClose: () => void, initialDate: Date, editingSlot: BusySlot | null }) => {
+    const { saveSlot, removeSlot, t, lang } = useContext(AppContext)!;
     const [type, setType] = useState<SlotType>('ONE_TIME');
     const [start, setStart] = useState("09:00");
     const [end, setEnd] = useState("18:00");
@@ -527,13 +528,26 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
     const dayLabels = lang === 'ru' ? ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     useEffect(() => {
-        if(isOpen && initialDate) {
-            const offset = initialDate.getTimezoneOffset();
-            const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
-            setDate(adjDate.toISOString().split('T')[0]);
-            setSelectedDays([initialDate.getDay()]);
+        if(isOpen) {
+            if (editingSlot) {
+                setType(editingSlot.type);
+                setStart(editingSlot.startTimeLocal || "09:00");
+                setEnd(editingSlot.endTimeLocal || "18:00");
+                setDescription(editingSlot.description || "");
+                if (editingSlot.type === 'ONE_TIME' && editingSlot.startAt) setDate(editingSlot.startAt.split('T')[0]);
+                if (editingSlot.dayOfWeek !== undefined) setSelectedDays([editingSlot.dayOfWeek]);
+            } else {
+                const offset = initialDate.getTimezoneOffset();
+                const adjDate = new Date(initialDate.getTime() - (offset*60*1000));
+                setDate(adjDate.toISOString().split('T')[0]);
+                setSelectedDays([initialDate.getDay()]);
+                setDescription("");
+                setStart("09:00");
+                setEnd("18:00");
+                setType('ONE_TIME');
+            }
         }
-    }, [isOpen, initialDate]);
+    }, [isOpen, initialDate, editingSlot]);
 
     if (!isOpen) return null;
 
@@ -544,17 +558,19 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
     const handleSave = async () => {
         if (type === 'CYCLIC_WEEKLY') {
             const payloads = selectedDays.map(day => ({
+                id: editingSlot?.id,
                 type: 'CYCLIC_WEEKLY' as SlotType,
                 dayOfWeek: day,
                 startTimeLocal: start,
                 endTimeLocal: end,
                 description
             }));
-            await addSlot(payloads);
+            await saveSlot(payloads);
         } else {
             const startD = new Date(`${date}T${start}:00`);
             const endD = new Date(`${date}T${end}:00`);
-            await addSlot({ 
+            await saveSlot({ 
+                id: editingSlot?.id,
                 type: 'ONE_TIME', 
                 startAt: startD.toISOString(), 
                 endAt: endD.toISOString(), 
@@ -566,30 +582,40 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
         onClose();
     };
 
+    const handleDelete = async () => {
+        if (editingSlot) {
+            await removeSlot(editingSlot.id);
+            onClose();
+        }
+    };
+
     return (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-end justify-center">
-            <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in">
-                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">{t('i_am_busy')}</h2><button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button></div>
+            <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in border-t border-white/10">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold">{editingSlot ? t('edit_slot') : t('i_am_busy')}</h2>
+                    <button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button>
+                </div>
                 
                 <div className="mb-6">
-                   <label className="text-xs text-gray-500 mb-1 block uppercase font-bold tracking-wider">{t('description_label')}</label>
+                   <label className="text-[10px] text-gray-500 mb-1 block uppercase font-bold tracking-wider">{t('description_label')}</label>
                    <input 
                     type="text" 
                     value={description} 
                     onChange={e => setDescription(e.target.value)} 
                     placeholder={t('description_placeholder')}
-                    className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700 focus:border-blue-500 outline-none" 
+                    className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700 focus:border-blue-500 outline-none text-sm" 
                    />
                 </div>
 
                 <div className="flex bg-[#27272a] p-1 rounded-lg mb-6">
-                    <button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'ONE_TIME' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('one_time_btn')}</button>
-                    <button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-sm rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white' : 'text-gray-400'}`}>{t('weekly_btn')}</button>
+                    <button onClick={() => setType('ONE_TIME')} className={`flex-1 py-2 text-xs rounded-md transition ${type === 'ONE_TIME' ? 'bg-[#3b82f6] text-white shadow-md' : 'text-gray-400'}`}>{t('one_time_btn')}</button>
+                    <button onClick={() => setType('CYCLIC_WEEKLY')} className={`flex-1 py-2 text-xs rounded-md transition ${type === 'CYCLIC_WEEKLY' ? 'bg-[#3b82f6] text-white shadow-md' : 'text-gray-400'}`}>{t('weekly_btn')}</button>
                 </div>
 
                 <div className="space-y-4 mb-8">
                     {type === 'ONE_TIME' ? (
-                        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700" />
+                        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700 text-sm" />
                     ) : (
                         <div className="flex justify-between gap-1">
                             {[1,2,3,4,5,6,0].map(dayIdx => (
@@ -605,29 +631,51 @@ const AddSlotModal = ({ isOpen, onClose, initialDate }: { isOpen: boolean, onClo
                     )}
 
                     <div className="flex gap-4">
-                        <div className="flex-1"><label className="text-xs text-gray-500 mb-1 block uppercase font-bold">{t('from')}</label><input type="time" value={start} onChange={e => setStart(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700" /></div>
-                        <div className="flex-1"><label className="text-xs text-gray-500 mb-1 block uppercase font-bold">{t('to')}</label><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700" /></div>
+                        <div className="flex-1"><label className="text-[10px] text-gray-500 mb-1 block uppercase font-bold">{t('from')}</label><input type="time" value={start} onChange={e => setStart(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700 text-sm" /></div>
+                        <div className="flex-1"><label className="text-[10px] text-gray-500 mb-1 block uppercase font-bold">{t('to')}</label><input type="time" value={end} onChange={e => setEnd(e.target.value)} className="w-full bg-[#27272a] p-3 rounded-lg text-white border border-gray-700 text-sm" /></div>
                     </div>
                 </div>
 
-                <button onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('save_availability')}</button>
+                <div className="flex flex-col gap-3">
+                    <button onClick={handleSave} className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('save_availability')}</button>
+                    {editingSlot && (
+                        <button onClick={handleDelete} className="w-full bg-red-500/10 text-red-500 py-4 rounded-xl font-bold border border-red-500/20 active:scale-95 transition">Удалить слот</button>
+                    )}
+                </div>
             </div>
         </div>
     );
 };
 
 const MySlotsScreen = () => {
-    const { mySlots, removeSlot, t, lang } = useContext(AppContext)!;
+    const { mySlots, t, lang } = useContext(AppContext)!;
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [isModalOpen, setModalOpen] = useState(false);
+    const [editingSlot, setEditingSlot] = useState<BusySlot | null>(null);
+
     const dailySlots = mySlots.filter(s => (s.type === 'CYCLIC_WEEKLY' && s.dayOfWeek === selectedDate.getDay()) || (s.type === 'ONE_TIME' && s.startAt?.startsWith(selectedDate.toISOString().split('T')[0])));
+    
     return (
         <div className="p-4 pb-24">
             <MiniCalendar mySlots={mySlots} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}</h2>
-            {dailySlots.length === 0 ? <div className="text-center py-10 opacity-30 text-sm">{t('free_bird')}</div> : dailySlots.map(s => <SlotCard key={s.id} slot={s} onDelete={() => removeSlot(s.id)} />)}
-            <button onClick={() => setModalOpen(true)} className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center z-40 active:scale-90 transition"><i className="fa-solid fa-plus text-xl"></i></button>
-            <AddSlotModal isOpen={isModalOpen} onClose={() => setModalOpen(false)} initialDate={selectedDate} />
+            <h2 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4 flex justify-between items-center">
+                <span>{t('my_busy_slots')} {selectedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}</span>
+                <span className="bg-red-500/10 text-red-500 px-2 py-0.5 rounded text-[8px]">{dailySlots.length}</span>
+            </h2>
+            {dailySlots.length === 0 ? <div className="text-center py-10 opacity-30 text-xs italic">{t('free_bird')}</div> : dailySlots.map(s => <SlotCard key={s.id} slot={s} onEdit={() => { setEditingSlot(s); setModalOpen(true); }} />)}
+            
+            <button 
+                onClick={() => { setEditingSlot(null); setModalOpen(true); }} 
+                className="fixed bottom-24 right-4 bg-[#3b82f6] text-white w-14 h-14 rounded-full shadow-xl flex items-center justify-center z-40 active:scale-90 transition hover:bg-blue-600 border border-white/20"
+            >
+                <i className="fa-solid fa-plus text-xl"></i>
+            </button>
+            <AddSlotModal 
+                isOpen={isModalOpen} 
+                onClose={() => { setModalOpen(false); setEditingSlot(null); }} 
+                initialDate={selectedDate} 
+                editingSlot={editingSlot}
+            />
         </div>
     );
 };
@@ -640,15 +688,24 @@ const SearchScreen = () => {
     const handleSearch = () => { setLoading(true); setTimeout(() => { setResults(TimeFinderService.findCommonFreeTime(group, allSlots, group.members.map(m => m.id))); setLoading(false); }, 1000); };
     return (
         <div className="p-4 pb-24 text-center">
-            {!results && !loading && <div className="py-20"><h2 className="text-xl font-bold mb-4">{t('find_time')}</h2><p className="text-gray-400 text-sm mb-8">Ищем пересечения для всех участников на 7 дней.</p><button onClick={handleSearch} className="bg-white text-black px-10 py-4 rounded-full font-bold">{t('find_magic_slot')}</button></div>}
-            {loading && <div className="py-20"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-4"></i><p className="text-gray-400">{t('calculating')}</p></div>}
+            {!results && !loading && (
+                <div className="py-20 flex flex-col items-center">
+                    <div className="w-16 h-16 bg-blue-500/10 text-blue-500 rounded-full flex items-center justify-center mb-6">
+                        <i className="fa-solid fa-wand-magic-sparkles text-2xl"></i>
+                    </div>
+                    <h2 className="text-xl font-bold mb-4">{t('find_time')}</h2>
+                    <p className="text-gray-400 text-sm mb-8 max-w-[250px]">Ищем идеальное окно, когда свободны все {group.members.length} участников на ближайшую неделю.</p>
+                    <button onClick={handleSearch} className="bg-[#3b82f6] text-white px-10 py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('find_magic_slot')}</button>
+                </div>
+            )}
+            {loading && <div className="py-20"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-4"></i><p className="text-gray-400 text-sm animate-pulse">{t('calculating')}</p></div>}
             {results && (
-                <div className="text-left">
-                    <div className="flex justify-between items-center mb-6"><h2 className="font-bold">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-blue-500 text-sm">{t('reset')}</button></div>
-                    {results.length === 0 ? <p className="text-red-400">{t('no_common_time')}</p> : results.slice(0,5).map((r, i) => (
-                        <div key={i} className="bg-[#27272a] p-4 rounded-xl mb-3 border-l-4 border-green-500">
-                            <div className="font-bold text-lg">{r.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} - {r.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div>
-                            <div className="text-xs text-gray-500">{r.start.toLocaleDateString(lang, {weekday: 'long', day: 'numeric', month: 'short'})}</div>
+                <div className="text-left slide-in">
+                    <div className="flex justify-between items-center mb-6"><h2 className="font-bold text-sm uppercase tracking-wider">{t('top_results')}</h2><button onClick={() => setResults(null)} className="text-blue-500 text-xs font-bold">{t('reset')}</button></div>
+                    {results.length === 0 ? <div className="p-10 text-center bg-red-500/5 rounded-2xl border border-red-500/10 text-red-400 text-sm">{t('no_common_time')}</div> : results.slice(0,5).map((r, i) => (
+                        <div key={i} className="bg-[#27272a] p-4 rounded-xl mb-3 border-l-4 border-green-500 shadow-sm">
+                            <div className="font-bold text-lg text-white">{r.start.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})} — {r.end.toLocaleTimeString(lang, {hour:'2-digit', minute:'2-digit'})}</div>
+                            <div className="text-xs text-gray-500 font-medium">{r.start.toLocaleDateString(lang, {weekday: 'long', day: 'numeric', month: 'short'})}</div>
                         </div>
                     ))}
                 </div>
@@ -662,15 +719,24 @@ const SettingsScreen = () => {
     if (!group) return null;
     return (
         <div className="p-4 space-y-4">
-            <div className="bg-[#27272a] p-6 rounded-2xl flex flex-col items-center">
-                <div className="w-16 h-16 bg-blue-500 rounded-full mb-3 flex items-center justify-center overflow-hidden">
+            <div className="bg-[#27272a] p-6 rounded-2xl flex flex-col items-center border border-white/5">
+                <div className="w-16 h-16 bg-blue-500 rounded-full mb-3 flex items-center justify-center overflow-hidden border-2 border-white/10">
                     {user.photoUrl ? <img src={user.photoUrl} className="w-full h-full object-cover" /> : <i className="fa-solid fa-user text-2xl"></i>}
                 </div>
                 <h2 className="font-bold text-lg">{user.firstName}</h2>
-                <p className="text-xs text-gray-500">@{user.username}</p>
+                <p className="text-xs text-gray-500">@{user.username || 'user'}</p>
             </div>
-            <button onClick={() => leaveGroup(group.id)} className="w-full p-4 bg-red-500/10 text-red-500 rounded-xl font-bold">{t('leave_group')}</button>
-            <button onClick={logout} className="w-full p-4 bg-[#27272a] text-gray-400 rounded-xl font-bold">{t('logout')}</button>
+            
+            <button 
+                onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} 
+                className="w-full p-4 bg-blue-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 active:scale-[0.98] transition"
+            >
+                <i className="fa-solid fa-plus-circle"></i>
+                {t('create_group_btn')}
+            </button>
+
+            <button onClick={() => leaveGroup(group.id)} className="w-full p-4 bg-red-500/5 text-red-500 rounded-xl font-bold border border-red-500/10 active:opacity-70 transition">{t('leave_group')}</button>
+            <button onClick={logout} className="w-full p-4 bg-[#27272a] text-gray-400 rounded-xl font-bold active:opacity-70 transition">{t('logout')}</button>
         </div>
     );
 };
@@ -678,14 +744,14 @@ const SettingsScreen = () => {
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('slots');
   const { isLoading, isAuthRequired, group, error } = useContext(AppContext)!;
-  if (error) return <div className="min-h-screen bg-[#18181b] p-10 text-red-400">{error}</div>;
+  if (error) return <div className="min-h-screen bg-[#18181b] p-10 text-red-400 text-center"><i className="fa-solid fa-triangle-exclamation mb-4 text-3xl"></i><p>{error}</p></div>;
   if (isAuthRequired) return <LoginScreen />;
-  if (isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-white text-2xl"></i></div>;
+  if (isLoading) return <div className="min-h-screen bg-[#18181b] flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-blue-500 text-3xl"></i></div>;
   if (!group) return <EmptyStateScreen />;
   return (
     <div className="min-h-screen bg-[#18181b] text-white">
       <Header />
-      <main>{activeTab === 'slots' ? <MySlotsScreen /> : activeTab === 'search' ? <SearchScreen /> : <SettingsScreen />}</main>
+      <main className="max-w-md mx-auto">{activeTab === 'slots' ? <MySlotsScreen /> : activeTab === 'search' ? <SearchScreen /> : <SettingsScreen />}</main>
       <TabBar active={activeTab} setTab={setActiveTab} />
     </div>
   );
@@ -695,6 +761,9 @@ const EmptyStateScreen = () => {
     const { t } = useContext(AppContext)!;
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-10 text-center">
+            <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mb-8 opacity-50">
+                <i className="fa-solid fa-users text-3xl"></i>
+            </div>
             <h1 className="text-xl font-bold mb-4">{t('no_groups')}</h1>
             <p className="text-gray-400 text-sm mb-10">{t('no_groups_desc')}</p>
             <button onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} className="w-full bg-blue-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('add_to_group_btn')}</button>
@@ -703,7 +772,14 @@ const EmptyStateScreen = () => {
 }
 
 const App = () => {
-    useEffect(() => { if (window.Telegram?.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } }, []);
+    useEffect(() => { 
+        if (window.Telegram?.WebApp) { 
+            window.Telegram.WebApp.ready(); 
+            window.Telegram.WebApp.expand(); 
+            window.Telegram.WebApp.setHeaderColor('#18181b');
+            window.Telegram.WebApp.setBackgroundColor('#18181b');
+        } 
+    }, []);
     return <AppProvider><AppContent /></AppProvider>;
 };
 
