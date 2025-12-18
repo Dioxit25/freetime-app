@@ -22,19 +22,25 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
     const userFreeIntervals: Record<number, TimeSlot[]> = {};
 
     members.forEach(m => {
+        const userId = m.user_id;
         const busy: TimeSlot[] = [];
-        slots.filter(s => s.user_id === m.user_id).forEach(s => {
+        slots.filter(s => s.user_id === userId).forEach(s => {
             if (s.type === 'ONE_TIME' && s.start_at && s.end_at) {
                 busy.push({ start: new Date(s.start_at), end: new Date(s.end_at) });
             } else if (s.type === 'CYCLIC_WEEKLY' && s.day_of_week !== undefined) {
                 let curr = new Date(windowStart);
                 while(curr < windowEnd) {
                     if (curr.getDay() === s.day_of_week) {
-                        const [sh, sm] = s.start_time_local!.split(':').map(Number);
-                        const [eh, em] = s.endTimeLocal!.split(':').map(Number);
-                        const start = new Date(curr); start.setHours(sh, sm, 0, 0);
-                        const end = new Date(curr); end.setHours(eh, em, 0, 0);
-                        busy.push({ start, end });
+                        // FIX: Ensure using snake_case for Supabase raw rows
+                        const startTime = s.start_time_local;
+                        const endTime = s.end_time_local;
+                        if (startTime && endTime) {
+                            const [sh, sm] = startTime.split(':').map(Number);
+                            const [eh, em] = endTime.split(':').map(Number);
+                            const start = new Date(curr); start.setHours(sh, sm, 0, 0);
+                            const end = new Date(curr); end.setHours(eh, em, 0, 0);
+                            busy.push({ start, end });
+                        }
                     }
                     curr.setDate(curr.getDate() + 1);
                 }
@@ -46,8 +52,12 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
         if (sortedBusy.length) {
             let last = sortedBusy[0];
             for (let i = 1; i < sortedBusy.length; i++) {
-                if (sortedBusy[i].start <= last.end) last.end = new Date(Math.max(last.end.getTime(), sortedBusy[i].end.getTime()));
-                else { merged.push(last); last = sortedBusy[i]; }
+                if (sortedBusy[i].start <= last.end) {
+                    last.end = new Date(Math.max(last.end.getTime(), sortedBusy[i].end.getTime()));
+                } else { 
+                    merged.push(last); 
+                    last = sortedBusy[i]; 
+                }
             }
             merged.push(last);
         }
@@ -59,7 +69,7 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
             p = new Date(Math.max(p.getTime(), b.end.getTime()));
         });
         if (p < windowEnd) free.push({ start: p, end: windowEnd });
-        userFreeIntervals[m.user_id] = free;
+        userFreeIntervals[userId] = free;
     });
 
     const memberIds = members.map(m => m.user_id);
@@ -85,7 +95,7 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
 
 bot.start(async (ctx) => {
     if (ctx.chat.type !== 'private') return;
-    await ctx.reply('👋 <b>Привет! Я TimeAgree.</b>\n\nЯ помогаю находить общее свободное время для встреч.\n\n🔐 <b>Вход автоматический</b> — просто нажми кнопку ниже!', {
+    await ctx.reply('👋 <b>Привет! Я TimeAgree.</b>\n\nЯ помогаю находить общее свободное время в группах.\n\n🛠 <b>Как запустить:</b>\n1. Добавь меня в группу.\n2. Сделай меня администратором (чтобы я мог быстро отвечать на команды).\n3. Напиши в группе /init.\n\n⬇️ <b>Нажми кнопку, чтобы войти:</b>', {
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [
@@ -96,42 +106,57 @@ bot.start(async (ctx) => {
     });
 });
 
+bot.help(async (ctx) => {
+    await ctx.reply('📚 <b>Доступные команды:</b>\n\n/init — Активировать календарь в этой группе\n/find — Найти лучшие окна для встречи\n\n<i>Для стабильной работы сделайте бота администратором группы.</i>', { parse_mode: 'HTML' });
+});
+
 bot.command('find', async (ctx) => {
     if (ctx.chat.type === 'private') return ctx.reply('Используйте эту команду в группе!');
     if (!supabase) return;
 
-    const chatId = ctx.chat.id;
-    const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
-    
-    const appUrl = `${WEB_APP_BASE}?gid=${chatId}`;
+    try {
+        const chatId = ctx.chat.id;
+        const { data: members, error: memError } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
+        
+        if (memError) throw memError;
 
-    if (!members || members.length === 0) {
-        return ctx.reply('🤔 В этой группе пока никто не заполнил календарь.\n\nЧтобы участвовать, просто перейдите в приложение:', {
-            reply_markup: { inline_keyboard: [[{ text: '🚀 Присоединиться', web_app: { url: appUrl } }]] }
-        });
-    }
+        const appUrl = `${WEB_APP_BASE}?gid=${chatId}`;
 
-    const { data: slots } = await supabase.from('slots').select('*').eq('group_id', chatId);
-    const results = findIntersections(members, slots || []);
-
-    if (results.length === 0) {
-        return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено.');
-    }
-
-    const text = results.slice(0, 5).map(r => {
-        const date = r.start.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
-        const time = `${r.start.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})} - ${r.end.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`;
-        return `✅ <b>${date}</b>: ${time}`;
-    }).join('\n');
-
-    await ctx.reply(`✨ <b>Лучшие окна для встречи:</b>\n\n${text}\n\n<i>Найдено среди ${members.length} участников.</i>`, { 
-        parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: [[
-                { text: '📅 Весь календарь группы', web_app: { url: appUrl } }
-            ]]
+        if (!members || members.length === 0) {
+            return ctx.reply('🤔 В этой группе пока никто не заполнил календарь.\n\nЧтобы участвовать, просто перейдите в приложение:', {
+                reply_markup: { inline_keyboard: [[{ text: '🚀 Присоединиться', web_app: { url: appUrl } }]] }
+            });
         }
-    });
+
+        const { data: slots, error: slotError } = await supabase.from('slots').select('*').eq('group_id', chatId);
+        if (slotError) throw slotError;
+
+        const results = findIntersections(members, slots || []);
+
+        if (results.length === 0) {
+            return ctx.reply('😔 К сожалению, общих окон на ближайшую неделю не найдено.\n\nПопробуйте освободить немного времени!', {
+                reply_markup: { inline_keyboard: [[{ text: '📅 Мой Календарь', web_app: { url: appUrl } }]] }
+            });
+        }
+
+        const text = results.slice(0, 5).map(r => {
+            const date = r.start.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+            const time = `${r.start.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})} - ${r.end.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`;
+            return `✅ <b>${date}</b>: ${time}`;
+        }).join('\n');
+
+        await ctx.reply(`✨ <b>Лучшие окна для встречи:</b>\n\n${text}\n\n<i>Найдено среди ${members.length} участников.</i>`, { 
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: '📅 Весь календарь группы', web_app: { url: appUrl } }
+                ]]
+            }
+        });
+    } catch (e: any) {
+        console.error("Find error:", e);
+        await ctx.reply(`❌ Произошла ошибка при поиске времени: ${e.message}`);
+    }
 });
 
 bot.on('my_chat_member', async (ctx) => {
@@ -145,13 +170,15 @@ bot.on('my_chat_member', async (ctx) => {
 
 bot.command('init', async (ctx) => {
     if (ctx.chat.type === 'private') return ctx.reply('Команда доступна только в группах!');
-    await initializeGroup(ctx, ctx.chat.id, (ctx.chat as any).title || 'Unknown');
+    await initializeGroup(ctx, ctx.chat.id, (ctx.chat as any).title || 'Группа');
 });
 
 async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     if (!supabase) return;
     try {
-        await supabase.from('groups').upsert({ id: chatId, title: chatTitle, tier: 'FREE' }, { onConflict: 'id' });
+        const { error } = await supabase.from('groups').upsert({ id: chatId, title: chatTitle, tier: 'FREE' }, { onConflict: 'id' });
+        if (error) throw error;
+
         const appUrl = `${WEB_APP_BASE}?gid=${chatId}`;
         await ctx.reply(
             `🗓 <b>Календарь для "${chatTitle}" активирован!</b>\n\nНажмите кнопку ниже, чтобы один раз авторизоваться и попасть в общую сетку.`, 
@@ -164,7 +191,10 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
                 }
             }
         );
-    } catch (e) { console.error("Init error:", e); }
+    } catch (e: any) { 
+        console.error("Init error:", e);
+        await ctx.reply(`❌ Ошибка инициализации группы: ${e.message}`);
+    }
 }
 
 export default async function handler(request: any, response: any) {
