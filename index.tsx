@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useContext, createContext, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
@@ -629,7 +630,8 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
             <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in border-t border-white/10">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold">{editingSlot ? t('edit_slot') : t('i_am_busy')}</h2>
-                    <button onClose={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button>
+                    {/* Fixed: Replaced 'onClose' prop with 'onClick' to fix TypeScript error on HTML button */}
+                    <button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button>
                 </div>
                 
                 <div className="mb-6">
