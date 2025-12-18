@@ -59,8 +59,8 @@ interface TimeSlot {
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
-    login_welcome: "Telegram Access Required",
-    login_desc: "This app works inside Telegram. Please open it via our official bot to log in automatically.",
+    login_welcome: "Auth Required",
+    login_desc: "This app only works inside Telegram. If you see this, please click the button below to open the bot, then start the Mini App from there.",
     logout: "Logout",
     upgrade: "UPGRADE",
     my_slots: "My Slots",
@@ -97,14 +97,14 @@ const TRANSLATIONS = {
     create_group_btn: "Add Bot to New Group",
     switch_group_title: "My Groups",
     no_groups: "No Groups Yet",
-    no_groups_desc: "Add the bot to a Telegram group to get started!",
+    no_groups_desc: "To start, add the bot to a Telegram group and click the link it provides.",
     add_to_group_btn: "Add Bot to Group",
-    open_in_tg: "Open Bot"
+    open_in_tg: "Go to Bot"
   },
   ru: {
     app_name: "TimeAgree",
-    login_welcome: "Вход через Telegram",
-    login_desc: "Приложение работает внутри Telegram. Откройте его через нашего официального бота для автоматического входа.",
+    login_welcome: "Нужна авторизация",
+    login_desc: "Приложение работает только внутри Telegram. Пожалуйста, нажмите кнопку ниже, перейдите к боту и запустите приложение оттуда.",
     logout: "Выйти",
     upgrade: "PREMIUM",
     my_slots: "Мои слоты",
@@ -140,10 +140,10 @@ const TRANSLATIONS = {
     share: "Отправить в чат",
     create_group_btn: "Добавить в новую группу",
     switch_group_title: "Мои группы",
-    no_groups: "Нет групп",
-    no_groups_desc: "Добавьте бота в группу Telegram, чтобы начать!",
+    no_groups: "Группы не найдены",
+    no_groups_desc: "Добавьте бота в группу Telegram или попросите участников скинуть ссылку на календарь.",
     add_to_group_btn: "Добавить бота в группу",
-    open_in_tg: "Открыть бота"
+    open_in_tg: "Перейти к боту"
   }
 };
 
@@ -216,7 +216,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       }
 
       if (!tgUserRaw) {
-        addLog("No user detected. External redirect required.");
+        addLog("No user detected. Environment is likely external browser.");
         setIsAuthRequired(true);
         setIsLoading(false);
         return;
@@ -249,28 +249,40 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       const urlParams = new URLSearchParams(window.location.search);
       let targetGroupId: number | null = null;
-      const qGid = urlParams.get('gid');
       
-      if (qGid) {
-          targetGroupId = parseInt(qGid);
-          await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
-      } else {
-          const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-          if (startParam?.startsWith('gid_')) {
-              targetGroupId = parseInt(startParam.split('_')[1]);
-              await supabase.from('group_members').upsert({ group_id: targetGroupId, user_id: currentUser.id }, { onConflict: 'group_id, user_id' });
-          }
+      // Check for gid in URL (legacy) or startapp param (correct)
+      const qGid = urlParams.get('gid');
+      const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+      
+      let rawGid = qGid;
+      if (startParam?.startsWith('gid_')) {
+          rawGid = startParam.split('_')[1].replace('m', '-');
+      }
+
+      if (rawGid) {
+          targetGroupId = parseInt(rawGid);
+          addLog(`Detected group context: ${targetGroupId}`);
+          // Force join the group immediately
+          await supabase.from('group_members').upsert(
+              { group_id: targetGroupId, user_id: currentUser.id }, 
+              { onConflict: 'group_id, user_id' }
+          );
       }
 
       await fetchUserGroups(currentUser.id);
 
+      // If we don't have a targeted group from URL, use the last or first one
       if (!targetGroupId) {
-          const { data } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id).limit(1);
+          const { data } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(1);
           if (data && data.length > 0) targetGroupId = data[0].group_id;
       }
 
-      if (targetGroupId) await loadGroupData(targetGroupId);
-      else setIsLoading(false);
+      if (targetGroupId) {
+          await loadGroupData(targetGroupId);
+      } else {
+          addLog("No group found for user.");
+          setIsLoading(false);
+      }
 
     } catch (e: any) {
       setError(e.message);
@@ -286,8 +298,13 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const loadGroupData = async (groupId: number) => {
     setIsLoading(true);
+    addLog(`Loading group ${groupId}...`);
     const { data: groupData } = await supabase.from('groups').select('*').eq('id', groupId).single();
-    if (!groupData) { setIsLoading(false); return; }
+    if (!groupData) { 
+        addLog("Group entry not found in DB.");
+        setIsLoading(false); 
+        return; 
+    }
 
     const { data: membersData } = await supabase.from('group_members').select('user_id, users(id, username, first_name, timezone)').eq('group_id', groupId);
     const members: User[] = membersData?.map((m: any) => ({
@@ -323,7 +340,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (!user || !group) return;
     const items = Array.isArray(payload) ? payload : [payload];
     
-    // If we are editing a cycle, we should replace all old entries of that cycle first
     if (isEdit && items[0].type === 'CYCLIC_WEEKLY') {
         const description = items[0].description || "";
         await supabase.from('slots')
@@ -346,8 +362,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             start_time_local: slot.startTimeLocal, 
             end_time_local: slot.endTimeLocal
         };
-        // For one-time slots, keep the ID for upsert. 
-        // For cycles being edited, we delete and re-insert, so we don't need IDs.
         if (slot.id && slot.type !== 'CYCLIC_WEEKLY') obj.id = slot.id;
         return obj;
     });
@@ -362,20 +376,14 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const removeSlot = async (slot: BusySlot) => { 
       if (!user || !group) return;
-      
       let query = supabase.from('slots').delete().eq('user_id', user.id).eq('group_id', group.id);
-      
       if (slot.type === 'CYCLIC_WEEKLY') {
-          // Delete entire cycle based on description and type
           query = query.eq('type', 'CYCLIC_WEEKLY').eq('description', slot.description || "");
       } else {
-          // One-time slot - delete only by ID
           query = query.eq('id', slot.id);
       }
-      
       const { error: delError } = await query;
       if (!delError && group) await fetchSlots(group.id);
-      else if (delError) alert("Delete Error: " + delError.message);
   };
   
   const switchGroup = async (groupId: number) => { await loadGroupData(groupId); };
@@ -413,7 +421,7 @@ const LoginScreen = () => {
 
     return (
         <div className="min-h-screen bg-[#18181b] flex flex-col items-center justify-center p-8 text-center text-white">
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/30 rotate-3">
+            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/30">
                 <i className="fa-brands fa-telegram text-5xl"></i>
             </div>
             <h1 className="text-2xl font-black mb-4 tracking-tight">{t('login_welcome')}</h1>
@@ -421,17 +429,11 @@ const LoginScreen = () => {
             
             <button 
                 onClick={openBot}
-                className="w-full max-w-[260px] px-8 py-5 bg-blue-500 rounded-2xl text-base font-bold shadow-xl shadow-blue-500/20 hover:bg-blue-600 transition active:scale-95 flex items-center justify-center gap-3"
+                className="w-full max-w-[260px] px-8 py-5 bg-blue-500 rounded-2xl text-base font-bold shadow-xl shadow-blue-500/20 active:scale-95 flex items-center justify-center gap-3"
             >
                 <i className="fa-solid fa-paper-plane"></i>
                 {t('open_in_tg')}
             </button>
-            
-            <div className="mt-16 flex items-center gap-2 opacity-30">
-                <div className="h-[1px] w-8 bg-white"></div>
-                <span className="text-[9px] uppercase font-bold tracking-[0.2em]">Secured by Telegram</span>
-                <div className="h-[1px] w-8 bg-white"></div>
-            </div>
         </div>
     );
 };
@@ -559,7 +561,6 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
                 }
                 
                 if (editingSlot.type === 'CYCLIC_WEEKLY') {
-                    // Find all days that belong to this cycle (same description)
                     const cycleDays = mySlots
                         .filter(s => s.type === 'CYCLIC_WEEKLY' && s.description === editingSlot.description)
                         .map(s => s.dayOfWeek)
@@ -796,7 +797,7 @@ const EmptyStateScreen = () => {
                 <i className="fa-solid fa-users text-3xl"></i>
             </div>
             <h1 className="text-xl font-bold mb-4">{t('no_groups')}</h1>
-            <p className="text-gray-400 text-sm mb-10">{t('no_groups_desc')}</p>
+            <p className="text-gray-400 text-sm mb-10 leading-relaxed max-w-[250px] mx-auto">{t('no_groups_desc')}</p>
             <button onClick={() => window.open(`https://t.me/${BOT_USERNAME}?startgroup=true`, '_blank')} className="w-full bg-blue-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition">{t('add_to_group_btn')}</button>
         </div>
     )
