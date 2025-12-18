@@ -59,8 +59,8 @@ interface TimeSlot {
 const TRANSLATIONS = {
   en: {
     app_name: "TimeAgree",
-    login_welcome: "Auth Required",
-    login_desc: "This app only works inside Telegram. If you see this, please click the button below to open the bot, then start the Mini App from there.",
+    login_welcome: "Open in Telegram",
+    login_desc: "This application is designed to work inside Telegram for automatic login. Please open our bot to get started.",
     logout: "Logout",
     upgrade: "UPGRADE",
     my_slots: "My Slots",
@@ -96,15 +96,15 @@ const TRANSLATIONS = {
     share: "Share to Chat",
     create_group_btn: "Add Bot to New Group",
     switch_group_title: "My Groups",
-    no_groups: "No Groups Yet",
-    no_groups_desc: "To start, add the bot to a Telegram group and click the link it provides.",
+    no_groups: "No Groups Found",
+    no_groups_desc: "To start, add the bot to a group or ask a group member for a direct link.",
     add_to_group_btn: "Add Bot to Group",
-    open_in_tg: "Go to Bot"
+    open_in_tg: "Go to Telegram"
   },
   ru: {
     app_name: "TimeAgree",
-    login_welcome: "Нужна авторизация",
-    login_desc: "Приложение работает только внутри Telegram. Пожалуйста, нажмите кнопку ниже, перейдите к боту и запустите приложение оттуда.",
+    login_welcome: "Открыть в Telegram",
+    login_desc: "Приложение работает внутри Telegram для автоматического входа. Пожалуйста, откройте нашего бота, чтобы начать работу.",
     logout: "Выйти",
     upgrade: "PREMIUM",
     my_slots: "Мои слоты",
@@ -141,9 +141,9 @@ const TRANSLATIONS = {
     create_group_btn: "Добавить в новую группу",
     switch_group_title: "Мои группы",
     no_groups: "Группы не найдены",
-    no_groups_desc: "Добавьте бота в группу Telegram или попросите участников скинуть ссылку на календарь.",
+    no_groups_desc: "Чтобы начать, добавьте бота в группу или попросите участников скинуть ссылку на календарь.",
     add_to_group_btn: "Добавить бота в группу",
-    open_in_tg: "Перейти к боту"
+    open_in_tg: "Перейти в Telegram"
   }
 };
 
@@ -215,11 +215,19 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }
       }
 
-      if (!tgUserRaw) {
-        addLog("No user detected. Environment is likely external browser.");
+      // If we are strictly outside Telegram (no WebApp data), show login gateway
+      if (!tgUserRaw && !window.Telegram?.WebApp?.initData) {
+        addLog("Outside Telegram environment.");
         setIsAuthRequired(true);
         setIsLoading(false);
         return;
+      }
+
+      // If we have some session but WebApp is missing initData, might be a stale session
+      if (!tgUserRaw) {
+          setIsAuthRequired(true);
+          setIsLoading(false);
+          return;
       }
 
       setIsAuthRequired(false);
@@ -250,7 +258,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const urlParams = new URLSearchParams(window.location.search);
       let targetGroupId: number | null = null;
       
-      // Check for gid in URL (legacy) or startapp param (correct)
       const qGid = urlParams.get('gid');
       const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
       
@@ -262,7 +269,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       if (rawGid) {
           targetGroupId = parseInt(rawGid);
           addLog(`Detected group context: ${targetGroupId}`);
-          // Force join the group immediately
           await supabase.from('group_members').upsert(
               { group_id: targetGroupId, user_id: currentUser.id }, 
               { onConflict: 'group_id, user_id' }
@@ -271,7 +277,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       await fetchUserGroups(currentUser.id);
 
-      // If we don't have a targeted group from URL, use the last or first one
       if (!targetGroupId) {
           const { data } = await supabase.from('group_members').select('group_id').eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(1);
           if (data && data.length > 0) targetGroupId = data[0].group_id;
@@ -280,7 +285,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       if (targetGroupId) {
           await loadGroupData(targetGroupId);
       } else {
-          addLog("No group found for user.");
+          addLog("No groups associated with user.");
           setIsLoading(false);
       }
 
@@ -298,10 +303,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const loadGroupData = async (groupId: number) => {
     setIsLoading(true);
-    addLog(`Loading group ${groupId}...`);
     const { data: groupData } = await supabase.from('groups').select('*').eq('id', groupId).single();
     if (!groupData) { 
-        addLog("Group entry not found in DB.");
         setIsLoading(false); 
         return; 
     }
@@ -413,7 +416,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
-// --- AUTH SCREEN ---
+// --- GATEWAY SCREEN ---
 
 const LoginScreen = () => {
     const { t } = useContext(AppContext)!;
@@ -626,7 +629,7 @@ const AddSlotModal = ({ isOpen, onClose, initialDate, editingSlot }: { isOpen: b
             <div className="bg-[#18181b] w-full max-w-md rounded-t-2xl p-6 pb-10 slide-in border-t border-white/10">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold">{editingSlot ? t('edit_slot') : t('i_am_busy')}</h2>
-                    <button onClick={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button>
+                    <button onClose={onClose} className="text-gray-400 p-2"><i className="fa-solid fa-xmark"></i></button>
                 </div>
                 
                 <div className="mb-6">
