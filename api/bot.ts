@@ -6,7 +6,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_KEY;
 
-const WEB_APP_BASE = 'https://freetime-app-rho.vercel.app/';
+const BOT_USERNAME = 'TimeAgreeBot';
+const MINI_APP_LINK = `https://t.me/${BOT_USERNAME}/app`;
 
 const bot = new Telegraf(BOT_TOKEN || 'MISSING_TOKEN');
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
@@ -30,7 +31,7 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
                 while(curr < windowEnd) {
                     if (curr.getDay() === s.day_of_week) {
                         const [sh, sm] = s.start_time_local!.split(':').map(Number);
-                        const [eh, em] = s.end_time_local!.split(':').map(Number);
+                        const [eh, em] = s.endTimeLocal!.split(':').map(Number);
                         const start = new Date(curr); start.setHours(sh, sm, 0, 0);
                         const end = new Date(curr); end.setHours(eh, em, 0, 0);
                         busy.push({ start, end });
@@ -84,12 +85,12 @@ function findIntersections(members: any[], slots: any[], days: number = 7): Time
 
 bot.start(async (ctx) => {
     if (ctx.chat.type !== 'private') return;
-    await ctx.reply('👋 <b>Привет! Я TimeAgree.</b>\n\nЯ помогаю группам находить лучшее время для встреч, не перебирая сотни сообщений.\n\n🔐 <b>Вход автоматический:</b> просто открой приложение кнопкой ниже. Никаких паролей!', {
+    await ctx.reply('👋 <b>Привет! Я TimeAgree.</b>\n\nЯ помогаю компаниям и друзьям находить идеальное время для встреч.\n\n🔐 <b>Вход автоматический:</b> просто нажми на кнопку ниже. Больше ничего не нужно!', {
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '🚀 Открыть Приложение', web_app: { url: WEB_APP_BASE } }],
-                [{ text: '👥 Добавить в группу', url: `https://t.me/${ctx.botInfo.username}?startgroup=true` }]
+                [{ text: '🚀 Открыть Приложение', web_app: { url: 'https://freetime-app-rho.vercel.app/' } }],
+                [{ text: '👥 Добавить в группу', url: `https://t.me/${BOT_USERNAME}?startgroup=true` }]
             ]
         }
     });
@@ -101,9 +102,13 @@ bot.command('find', async (ctx) => {
 
     const chatId = ctx.chat.id;
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', chatId);
-    if (!members || members.length === 0) return ctx.reply('В группе пока нет активных участников. Открой приложение ниже, чтобы я тебя запомнил! 👇', {
-        reply_markup: { inline_keyboard: [[{ text: '🚀 Открыть', url: `${WEB_APP_BASE}?gid=${chatId}` }]] }
-    });
+    
+    if (!members || members.length === 0) {
+        const joinLink = `${MINI_APP_LINK}?startapp=gid_${chatId.toString().replace('-', 'm')}`;
+        return ctx.reply('🤔 В этой группе пока никто не заполнил календарь.\n\nЧтобы участвовать, просто перейдите по ссылке:', {
+            reply_markup: { inline_keyboard: [[{ text: '🚀 Присоединиться', url: joinLink }]] }
+        });
+    }
 
     const { data: slots } = await supabase.from('slots').select('*').eq('group_id', chatId);
     const results = findIntersections(members, slots || []);
@@ -118,11 +123,12 @@ bot.command('find', async (ctx) => {
         return `✅ <b>${date}</b>: ${time}`;
     }).join('\n');
 
+    const calendarLink = `${MINI_APP_LINK}?startapp=gid_${chatId.toString().replace('-', 'm')}`;
     await ctx.reply(`✨ <b>Лучшие окна для встречи:</b>\n\n${text}\n\n<i>Найдено среди ${members.length} участников.</i>`, { 
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [[
-                { text: '📅 Весь календарь', url: `${WEB_APP_BASE}?gid=${chatId}` }
+                { text: '📅 Весь календарь группы', url: calendarLink }
             ]]
         }
     });
@@ -146,14 +152,14 @@ async function initializeGroup(ctx: any, chatId: number, chatTitle: string) {
     if (!supabase) return;
     try {
         await supabase.from('groups').upsert({ id: chatId, title: chatTitle, tier: 'FREE' }, { onConflict: 'id' });
-        const appLink = `${WEB_APP_BASE}?gid=${chatId}`;
+        const appLink = `${MINI_APP_LINK}?startapp=gid_${chatId.toString().replace('-', 'm')}`;
         await ctx.reply(
-            `🗓 <b>Календарь для "${chatTitle}" активирован!</b>\n\n1. Отметьте свою занятость в приложении.\n2. Используйте /find для поиска идеального времени.`, 
+            `🗓 <b>Календарь для "${chatTitle}" активирован!</b>\n\nКаждый участник должен нажать кнопку ниже один раз, чтобы авторизоваться и попасть в общую сетку.`, 
             {
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [[
-                        { text: '🚀 Настроить занятость', url: appLink }
+                        { text: '🚀 Перейти в календарь', url: appLink }
                     ]]
                 }
             }
