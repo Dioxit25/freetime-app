@@ -1,20 +1,38 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Проект Freetime App
 
-# Run and deploy your AI Studio app
+Это веб-приложение с использованием React и TypeScript. Проект также включает интеграцию с Telegram ботом через Telegraf, работу с базой данных Supabase и использование Tailwind CSS для стилизации.
 
-This contains everything you need to run your app locally.
+## Стек технологий
 
-View your app in AI Studio: https://ai.studio/apps/drive/1QpNijRjcOXHbRijGASn6A-xHOFdQ4MAL
+- React 18.2.0
+- TypeScript 5.0.2
+- Vite 4.4.5
+- Tailwind CSS 3.3.3
+- Supabase 2.39.0
+- Telegraf 4.16.3
+- Dotenv 16.4.5
 
-## Run Locally
+## Установка и запуск
 
-**Prerequisites:**  Node.js
+1. Установите зависимости:
+   ```bash
+   npm install
+   ```
 
+2. Настройте переменные окружения в файле `.env.local`, указав необходимые ключи API
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+3. Запустите приложение в режиме разработки:
+   ```bash
+   npm run dev
+   ```
+
+## Структура проекта
+
+- `api/bot.ts` - код для Telegram бота
+- `index.html` - основной HTML файл
+- `index.tsx` - главный компонент React
+- `package.json` - зависимости и скрипты
+- `tsconfig.json` - конфигурация TypeScript
+- `vite.config.ts` - конфигурация Vite
+- `tailwind.config.js` - конфигурация Tailwind CSS
+- `vercel.json` - конфигурация для деплоя на Vercel
