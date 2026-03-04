@@ -1,43 +1,50 @@
-import { NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
 
-const prisma = new PrismaClient()
-
-export async function GET() {
+export async function POST(request: NextRequest) {
   try {
-    // Create default group for existing slots
-    const defaultGroup = await prisma.group.upsert({
-      where: { telegramChatId: BigInt(0) },
-      update: {},
-      create: {
-        telegramChatId: BigInt(0),
-        telegramTitle: 'Personal',
-        tier: 'FREE',
-      },
-    })
+    // This will create/update tables based on schema
+    // For production, we typically use migrations, but for quick fixes:
+    await db.$executeRaw`CREATE TABLE IF NOT EXISTS "User" (
+      "id" TEXT NOT NULL,
+      "telegramId" BIGINT NOT NULL,
+      "username" TEXT,
+      "firstName" TEXT NOT NULL,
+      "lastName" TEXT,
+      "timezone" TEXT NOT NULL DEFAULT 'UTC',
+      "languageCode" TEXT DEFAULT 'en',
+      "photoUrl" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    console.log('Default group created:', defaultGroup.id)
+      CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+    )`
 
-    // Update all existing slots to use this group
-    const result = await prisma.slot.updateMany({
-      where: { groupId: null },
-      data: { groupId: defaultGroup.id },
-    })
+    await db.$executeRaw`CREATE TABLE IF NOT EXISTS "Group" (
+      "id" TEXT NOT NULL,
+      "telegramChatId" BIGINT NOT NULL,
+      "telegramTitle" TEXT NOT NULL,
+      "telegramPhotoUrl" TEXT,
+      "tier" TEXT NOT NULL DEFAULT 'FREE',
+      "memberCount" INTEGER NOT NULL DEFAULT 1,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    console.log('Updated slots:', result.count)
+      CONSTRAINT "Group_pkey" PRIMARY KEY ("id")
+    )`
 
-    await prisma.$disconnect()
+    // Add memberCount column if it doesn't exist
+    try {
+      await db.$executeRaw`ALTER TABLE "Group" ADD COLUMN IF NOT EXISTS "memberCount" INTEGER NOT NULL DEFAULT 1`
+    } catch (e: any) {
+      console.log('memberCount column already exists or error:', e.message)
+    }
 
-    return NextResponse.json({
-      success: true,
-      groupId: defaultGroup.id,
-      updatedSlots: result.count,
-    })
+    return NextResponse.json({ success: true, message: 'Migration completed' })
   } catch (error: any) {
     console.error('Migration error:', error)
-    await prisma.$disconnect()
     return NextResponse.json(
-      { error: 'Migration failed', details: error.message },
+      { success: false, error: error.message },
       { status: 500 }
     )
   }

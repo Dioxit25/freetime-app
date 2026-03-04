@@ -32,6 +32,7 @@ model Group {
   telegramTitle   String
   telegramPhotoUrl String?
   tier            String        @default("FREE") // FREE, GROUP_PRO, BUSINESS
+  memberCount     Int           @default(1)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
