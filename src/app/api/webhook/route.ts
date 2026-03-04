@@ -20,6 +20,66 @@ async function saveWebhookLog(data: {
   }
 }
 
+// Helper function to get or create user
+async function getOrCreateUser(telegramUser: any): Promise<any> {
+  const user = await db.user.upsert({
+    where: { telegramId: BigInt(telegramUser.id) },
+    update: {
+      firstName: telegramUser.first_name,
+      lastName: telegramUser.last_name,
+      username: telegramUser.username,
+      photoUrl: telegramUser.photo_url,
+      languageCode: telegramUser.language_code,
+    },
+    create: {
+      telegramId: BigInt(telegramUser.id),
+      firstName: telegramUser.first_name,
+      lastName: telegramUser.last_name,
+      username: telegramUser.username,
+      photoUrl: telegramUser.photo_url,
+      languageCode: telegramUser.language_code,
+      timezone: 'Europe/Moscow',
+    },
+  })
+  return user
+}
+
+// Helper function to create or update group
+async function createOrUpdateGroup(chat: any, addedByUserId: string): Promise<any> {
+  const group = await db.group.upsert({
+    where: { telegramChatId: BigInt(chat.id) },
+    update: {
+      telegramTitle: chat.title || 'Группа',
+      telegramPhotoUrl: chat.photo_url,
+      memberCount: 1, // Will be updated when members join
+    },
+    create: {
+      telegramChatId: BigInt(chat.id),
+      telegramTitle: chat.title || 'Группа',
+      telegramPhotoUrl: chat.photo_url,
+      tier: 'FREE',
+      memberCount: 1,
+    },
+  })
+
+  // Add the user who added the bot as a member
+  await db.groupMember.upsert({
+    where: {
+      userId_groupId: {
+        userId: addedByUserId,
+        groupId: group.id,
+      },
+    },
+    update: {},
+    create: {
+      userId: addedByUserId,
+      groupId: group.id,
+    },
+  })
+
+  return group
+}
+
 // POST /api/webhook - Telegram webhook with full logging
 export async function POST(request: NextRequest) {
   let responseData: any = { ok: true }
@@ -33,6 +93,7 @@ export async function POST(request: NextRequest) {
     console.log('Update ID:', body.update_id)
     console.log('Has message:', !!body.message)
     console.log('Has callback_query:', !!body.callback_query)
+    console.log('Has my_chat_member:', !!body.my_chat_member)
 
     // Determine event type and extract IDs
     let eventType: string | undefined = undefined
@@ -55,21 +116,105 @@ export async function POST(request: NextRequest) {
       eventType = 'new_chat_members'
       telegramUserId = body.message?.from?.id
       telegramChatId = body.message?.chat?.id
+    } else if (body.left_chat_member) {
+      eventType = 'left_chat_member'
+      telegramUserId = body.message?.from?.id
+      telegramChatId = body.message?.chat?.id
     }
 
     console.log('Event Type:', eventType)
     console.log('User ID:', telegramUserId?.toString())
     console.log('Chat ID:', telegramChatId?.toString())
+    console.log('Is group chat:', body.message?.chat?.type === 'group' || body.message?.chat?.type === 'supergroup')
+
+    const WEB_APP_URL = process.env.WEB_APP_URL || 'https://freetime-app-jy3k.vercel.app'
+
+    // Handle my_chat_member event (bot added/removed from group)
+    if (body.my_chat_member) {
+      const myChatMember = body.my_chat_member
+      const chat = myChatMember.chat
+      const from = myChatMember.from
+      const oldStatus = myChatMember.old_chat_member.status
+      const newStatus = myChatMember.new_chat_member.status
+
+      console.log('my_chat_member event:', { chatId: chat.id, oldStatus, newStatus })
+
+      // Bot was added to a group
+      if (oldStatus === 'left' && (newStatus === 'member' || newStatus === 'administrator')) {
+        console.log('🎉 Bot was added to group:', chat.title || chat.id)
+
+        // Get or create the user who added the bot
+        const user = await getOrCreateUser(from)
+
+        // Create or update the group
+        const group = await createOrUpdateGroup(chat, user.id)
+
+        console.log('✅ Group created/updated:', group.id, group.telegramTitle)
+
+        // Send welcome message to the group
+        await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chat.id,
+            text: `🎉 Бот добавлен в группу "${chat.title || 'Группа'}"!\n\n📱 Откройте приложение, чтобы начать управлять временем:`,
+            reply_markup: {
+              inline_keyboard: [[{
+                text: '🌐 Открыть TimeAgree',
+                web_app: { url: WEB_APP_URL }
+              }]]
+            }
+          }),
+        })
+
+        responseData = {
+          ok: true,
+          action: 'bot_added_to_group',
+          groupId: group.id,
+        }
+      }
+      // Bot was removed from group
+      else if (newStatus === 'left' && (oldStatus === 'member' || oldStatus === 'administrator')) {
+        console.log('👋 Bot was removed from group:', chat.title || chat.id)
+
+        // Optionally: mark group as inactive or keep it in database
+        responseData = {
+          ok: true,
+          action: 'bot_removed_from_group',
+        }
+      }
+
+      await saveWebhookLog({
+        updateId: body.update_id ? BigInt(body.update_id) : undefined,
+        eventType,
+        telegramUserId: telegramUserId ? BigInt(telegramUserId) : undefined,
+        telegramChatId: telegramChatId ? BigInt(telegramChatId) : undefined,
+        payload: payloadStr,
+        response: JSON.stringify(responseData),
+      })
+
+      return NextResponse.json(responseData)
+    }
 
     // Handle messages
     if (body.message && body.message.text) {
       const text = body.message.text
       const chatId = body.message.chat.id
+      const chatType = body.message.chat.type
+      const from = body.message.from
 
       console.log('Command:', text)
-      console.log('Processing command...')
+      console.log('Chat type:', chatType)
 
-      const WEB_APP_URL = process.env.WEB_APP_URL || 'https://freetime-app-jy3k.vercel.app'
+      // Get or create user
+      const user = await getOrCreateUser(from)
+
+      // If in a group chat, create/update group and add user as member
+      if (chatType === 'group' || chatType === 'supergroup') {
+        const chat = body.message.chat
+        await createOrUpdateGroup(chat, user.id)
+        console.log('✅ User added to group:', chat.title || chat.id)
+      }
 
       if (text === '/start') {
         console.log('Sending /start welcome message...')
@@ -79,7 +224,9 @@ export async function POST(request: NextRequest) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: '👋 Добро пожаловать в TimeAgree!\n\n📱 Это бот для управления вашим временем и поиска общих свободных моментов с группой.\n\n🚀 Откройте приложение, чтобы начать:',
+            text: chatType === 'private'
+              ? '👋 Добро пожаловать в TimeAgree!\n\n📱 Это бот для управления вашим временем и поиска общих свободных моментов с группой.\n\n🔹 Добавьте бота в группу, чтобы начать совместное планирование\n🔹 Откройте приложение, чтобы управлять своим временем'
+              : `👋 Привет, ${from.first_name}!\n\n📱 Бот TimeAgree работает в этой группе. Откройте приложение, чтобы начать:`,
             reply_markup: {
               inline_keyboard: [[{
                 text: '🌐 Открыть TimeAgree',
@@ -96,6 +243,7 @@ export async function POST(request: NextRequest) {
         responseData = {
           ok: true,
           command: '/start',
+          chatType,
           telegramResponse: { ok: response.ok, status: response.status, body: responseText }
         }
 
