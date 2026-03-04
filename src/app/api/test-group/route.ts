@@ -23,7 +23,12 @@ export async function POST(request: NextRequest) {
       LIMIT 1
     `
 
-    return NextResponse.json({ success: true, group })
+    // Serialize BigInt to string
+    const serializedGroup = JSON.stringify(group, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    )
+
+    return NextResponse.json({ success: true, group: JSON.parse(serializedGroup) })
   } catch (error: any) {
     console.error('Test group error:', error)
     return NextResponse.json(
