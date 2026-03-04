@@ -326,6 +326,16 @@ export default function Home() {
 
     setSavingSlot(true)
 
+    console.log('💾 Saving slot:', {
+      userId: user.id,
+      groupId: selectedGroup.id,
+      type: slotType,
+      date,
+      startTime,
+      endTime,
+      description,
+    })
+
     try {
       if (slotType === 'CYCLIC_WEEKLY') {
         const payloads = selectedDays.map(day => ({
@@ -337,6 +347,7 @@ export default function Home() {
         }))
 
         for (const payload of payloads) {
+          console.log('💾 Saving cyclic slot:', payload)
           const response = await fetch('/api/slots', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -349,32 +360,42 @@ export default function Home() {
 
           if (!response.ok) {
             const errorText = await response.text()
+            console.error('❌ Failed to save cyclic slot:', errorText)
             throw new Error(errorText || 'Failed to save slot')
           }
+          console.log('✅ Cyclic slot saved')
         }
       } else {
         const startD = new Date(`${date}T${startTime}:00`)
         const endD = new Date(`${date}T${endTime}:00`)
 
+        const payload = {
+          userId: user.id,
+          groupId: selectedGroup.id,
+          type: 'ONE_TIME',
+          description,
+          startAt: startD.toISOString(),
+          endAt: endD.toISOString(),
+          startTimeLocal: startTime,
+          endTimeLocal: endTime,
+        }
+
+        console.log('💾 Saving one-time slot:', payload)
+
         const response = await fetch('/api/slots', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.id,
-            groupId: selectedGroup.id,
-            type: 'ONE_TIME',
-            description,
-            startAt: startD.toISOString(),
-            endAt: endD.toISOString(),
-            startTimeLocal: startTime,
-            endTimeLocal: endTime,
-          }),
+          body: JSON.stringify(payload),
         })
 
         if (!response.ok) {
           const errorText = await response.text()
+          console.error('❌ Failed to save slot:', errorText)
           throw new Error(errorText || 'Failed to save slot')
         }
+
+        const result = await response.json()
+        console.log('✅ Slot saved:', result)
       }
 
       toast({ title: 'Успешно', description: 'Время сохранено' })
@@ -387,7 +408,7 @@ export default function Home() {
       setEndTime('18:00')
       setSelectedDays([])
     } catch (error: any) {
-      console.error('Failed to save slot:', error)
+      console.error('❌ Failed to save slot:', error)
       toast({ title: 'Ошибка', description: error.message || 'Не удалось сохранить', variant: 'destructive' })
     } finally {
       setSavingSlot(false)
@@ -896,7 +917,7 @@ export default function Home() {
                       Найдите общее свободное время с участниками группы
                     </p>
                     <p className="text-sm text-gray-500 mb-6">
-                      Группа: {selectedGroup?.telegramTitle} ({getParticipantsText(groupMembers.length)})
+                      Группа: {selectedGroup?.telegramTitle}
                     </p>
                     <Button
                       onClick={handleFindCommonTime}
