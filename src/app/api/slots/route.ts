@@ -15,26 +15,43 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    let query = `
-      SELECT
-        s.*,
-        u."id" as "user_id",
-        u."firstName",
-        u."lastName",
-        u."username",
-        u."photoUrl"
-      FROM "Slot" s
-      LEFT JOIN "User" u ON s."userId" = u."id"
-      WHERE s."groupId" = ${groupId}
-    `
+    console.log('📂 Fetching slots:', { groupId, userId })
+
+    // Build query using template literal
+    let slots = [] as any[]
 
     if (userId) {
-      query += ` AND s."userId" = ${userId}`
+      slots = await db.$queryRaw`
+        SELECT
+          s.*,
+          u."id" as "user_id",
+          u."firstName",
+          u."lastName",
+          u."username",
+          u."photoUrl"
+        FROM "Slot" s
+        LEFT JOIN "User" u ON s."userId" = u."id"
+        WHERE s."groupId" = ${groupId}
+          AND s."userId" = ${userId}
+        ORDER BY s."createdAt" DESC
+      ` as any[]
+    } else {
+      slots = await db.$queryRaw`
+        SELECT
+          s.*,
+          u."id" as "user_id",
+          u."firstName",
+          u."lastName",
+          u."username",
+          u."photoUrl"
+        FROM "Slot" s
+        LEFT JOIN "User" u ON s."userId" = u."id"
+        WHERE s."groupId" = ${groupId}
+        ORDER BY s."createdAt" DESC
+      ` as any[]
     }
 
-    query += ` ORDER BY s."createdAt" DESC`
-
-    const slots = await db.$queryRaw(query) as any[]
+    console.log(`✅ Found ${slots.length} slots in database`)
 
     // Format slots with user info
     const formattedSlots = slots.map((slot: any) => ({
@@ -59,9 +76,10 @@ export async function GET(request: NextRequest) {
       },
     }))
 
+    console.log(`✅ Returning ${formattedSlots.length} formatted slots`)
     return NextResponse.json(formattedSlots)
   } catch (error: any) {
-    console.error('Error fetching slots:', error)
+    console.error('❌ Error fetching slots:', error)
     return NextResponse.json(
       { error: 'Failed to fetch slots', details: error.message },
       { status: 500 }
