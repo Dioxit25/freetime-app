@@ -44,25 +44,88 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
   return user
 }
 
-// Helper function to create or update group
+// Helper function to create or update group using raw SQL
 async function createOrUpdateGroup(chat: any, addedByUserId: string): Promise<any> {
-  const group = await db.group.upsert({
-    where: { telegramChatId: BigInt(chat.id) },
-    update: {
-      telegramTitle: chat.title || 'Группа',
-      telegramPhotoUrl: chat.photo_url,
-      memberCount: 1, // Will be updated when members join
-    },
-    create: {
-      telegramChatId: BigInt(chat.id),
-      telegramTitle: chat.title || 'Группа',
-      telegramPhotoUrl: chat.photo_url,
-      tier: 'FREE',
-      memberCount: 1,
-    },
-  })
+  try {
+    // Use Prisma Client if it has memberCount field
+    await db.group.upsert({
+      where: { telegramChatId: BigInt(chat.id) },
+      update: {
+        telegramTitle: chat.title || 'Группа',
+        telegramPhotoUrl: chat.photo_url,
+        memberCount: 1,
+      },
+      create: {
+        telegramChatId: BigInt(chat.id),
+        telegramTitle: chat.title || 'Группа',
+        telegramPhotoUrl: chat.photo_url,
+        tier: 'FREE',
+        memberCount: 1,
+      },
+    })
+  } catch (e: any) {
+    // If Prisma fails (schema not updated), use raw SQL
+    console.log('Prisma group upsert failed, using raw SQL:', e.message)
 
-  // Add the user who added the bot as a member
+    // Get or create user first
+    const user = await db.user.findUnique({
+      where: { id: addedByUserId },
+    })
+
+    if (!user) {
+      throw new Error('User not found')
+    }
+
+    // Upsert group using raw SQL
+    await db.$executeRaw`
+      INSERT INTO "Group" ("id", "telegramChatId", "telegramTitle", "telegramPhotoUrl", "tier", "memberCount", "createdAt", "updatedAt")
+      VALUES (gen_random_uuid()::text, ${BigInt(chat.id)}, ${chat.title || 'Группа'}, ${chat.photo_url || null}, 'FREE', 1, NOW(), NOW())
+      ON CONFLICT ("telegramChatId")
+      DO UPDATE SET
+        "telegramTitle" = ${chat.title || 'Группа'},
+        "telegramPhotoUrl" = ${chat.photo_url || null},
+        "memberCount" = 1,
+        "updatedAt" = NOW()
+    `
+
+    // Get the group ID
+    const groups = await db.$queryRaw`
+      SELECT "id", "telegramChatId" FROM "Group" WHERE "telegramChatId" = ${BigInt(chat.id)} LIMIT 1
+    ` as any[]
+
+    const groupId = groups[0]?.id
+
+    if (!groupId) {
+      throw new Error('Failed to get group ID')
+    }
+
+    // Add user as member using raw SQL
+    await db.$executeRaw`
+      INSERT INTO "GroupMember" ("id", "userId", "groupId", "joinedAt")
+      VALUES (gen_random_uuid()::text, ${addedByUserId}, ${groupId}, NOW())
+      ON CONFLICT ("userId", "groupId")
+      DO NOTHING
+    `
+
+    // Return the group
+    const result = await db.$queryRaw`
+      SELECT * FROM "Group" WHERE "telegramChatId" = ${BigInt(chat.id)} LIMIT 1
+    ` as any[]
+
+    // Serialize BigInt to string
+    const serialized = JSON.stringify(result[0], (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    )
+
+    return JSON.parse(serialized)
+  }
+
+  // If Prisma worked, add user as member
+  const group = await db.group.findUnique({
+    where: { telegramChatId: BigInt(chat.id) },
+  }) as any
+
+  // Add user as member
   await db.groupMember.upsert({
     where: {
       userId_groupId: {
@@ -77,7 +140,12 @@ async function createOrUpdateGroup(chat: any, addedByUserId: string): Promise<an
     },
   })
 
-  return group
+  // Serialize BigInt to string
+  const serialized = JSON.stringify(group, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  )
+
+  return JSON.parse(serialized)
 }
 
 // POST /api/webhook - Telegram webhook with full logging
