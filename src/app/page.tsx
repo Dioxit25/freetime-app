@@ -319,6 +319,16 @@ export default function Home() {
       return
     }
 
+    // Check if using demo user
+    if (user.id === 'demo-user' || selectedGroup.id === 'demo-group') {
+      toast({
+        title: 'Демо режим',
+        description: 'В демо режиме нельзя сохранять слоты. Откройте приложение в Telegram WebApp.',
+        variant: 'destructive'
+      })
+      return
+    }
+
     if (!date && slotType === 'ONE_TIME') {
       toast({ title: 'Ошибка', description: 'Выберите дату', variant: 'destructive' })
       return
@@ -331,14 +341,11 @@ export default function Home() {
 
     setSavingSlot(true)
 
-    console.log('💾 Saving slot:', {
+    console.log('💾 Saving slot with user:', {
       userId: user.id,
+      userFirstName: user.firstName,
       groupId: selectedGroup.id,
-      type: slotType,
-      date,
-      startTime,
-      endTime,
-      description,
+      groupName: selectedGroup.telegramTitle,
     })
 
     try {

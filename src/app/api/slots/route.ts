@@ -117,6 +117,47 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Validation passed, inserting slot into database...')
 
+    // Verify user exists in database
+    const users = await db.$queryRaw`
+      SELECT "id" FROM "User" WHERE "id" = ${userId} LIMIT 1
+    ` as any[]
+
+    if (!users || users.length === 0) {
+      console.log('❌ User not found in database:', userId)
+      return NextResponse.json(
+        { error: 'User not found', details: `User with id ${userId} does not exist in database`, userId, groupId },
+        { status: 404 }
+      )
+    }
+
+    // Verify group exists in database
+    const groups = await db.$queryRaw`
+      SELECT "id" FROM "Group" WHERE "id" = ${groupId} LIMIT 1
+    ` as any[]
+
+    if (!groups || groups.length === 0) {
+      console.log('❌ Group not found in database:', groupId)
+      return NextResponse.json(
+        { error: 'Group not found', details: `Group with id ${groupId} does not exist in database`, userId, groupId },
+        { status: 404 }
+      )
+    }
+
+    // Verify user is a member of the group
+    const memberships = await db.$queryRaw`
+      SELECT "userId" FROM "GroupMember" WHERE "userId" = ${userId} AND "groupId" = ${groupId} LIMIT 1
+    ` as any[]
+
+    if (!memberships || memberships.length === 0) {
+      console.log('❌ User is not a member of the group:', userId, groupId)
+      return NextResponse.json(
+        { error: 'User not in group', details: `User with id ${userId} is not a member of group ${groupId}`, userId, groupId },
+        { status: 403 }
+      )
+    }
+
+    console.log('✅ User and group verified, creating slot...')
+
     // Create slot using raw SQL
     const slots = await db.$queryRaw`
       INSERT INTO "Slot" ("id", "userId", "groupId", "type", "description", "startAt", "endAt", "dayOfWeek", "startTimeLocal", "endTimeLocal", "createdAt", "updatedAt")
@@ -157,10 +198,20 @@ export async function POST(request: NextRequest) {
     console.error('❌ Error creating slot:', error)
     console.error('Error name:', error.name)
     console.error('Error message:', error.message)
-    console.error('Error stack:', error.stack)
+    console.error('Error code:', error.code)
+
+    let errorMessage = error.message || 'Failed to create slot'
+    let errorDetails = error.name || 'Unknown error'
+
+    // Handle foreign key violation
+    if (error.code === 'P2003' || error.message?.includes('foreign key')) {
+      errorMessage = 'User or group not found in database'
+      errorDetails = 'Проверьте, что пользователь и группа существуют в базе данных'
+    }
+
     console.log('=== SLOT CREATION FAILED ===')
     return NextResponse.json(
-      { error: 'Failed to create slot', details: error.message, name: error.name },
+      { error: errorMessage, details: errorDetails, code: error.code, userId, groupId },
       { status: 500 }
     )
   }
