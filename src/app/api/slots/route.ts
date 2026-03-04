@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
-
-const prisma = new PrismaClient()
-
-const slotSchema = {
-  type: ['ONE_TIME', 'CYCLIC_WEEKLY'],
-}
+import { db } from '@/lib/db'
 
 // GET /api/slots - Get slots for a group
 export async function GET(request: NextRequest) {
@@ -21,33 +15,55 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const slots = await prisma.slot.findMany({
-      where: {
-        groupId,
-        ...(userId && { userId }),
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            username: true,
-            photoUrl: true,
-          },
-        },
-      },
-    })
+    let query = `
+      SELECT
+        s.*,
+        u."id" as "user_id",
+        u."firstName",
+        u."lastName",
+        u."username",
+        u."photoUrl"
+      FROM "Slot" s
+      LEFT JOIN "User" u ON s."userId" = u."id"
+      WHERE s."groupId" = ${groupId}
+    `
 
-    await prisma.$disconnect()
+    if (userId) {
+      query += ` AND s."userId" = ${userId}`
+    }
 
-    return NextResponse.json(slots)
-  } catch (error) {
+    query += ` ORDER BY s."createdAt" DESC`
+
+    const slots = await db.$queryRaw(query) as any[]
+
+    // Format slots with user info
+    const formattedSlots = slots.map((slot: any) => ({
+      id: slot.id,
+      userId: slot.userId,
+      groupId: slot.groupId,
+      type: slot.type,
+      description: slot.description,
+      startAt: slot.startAt,
+      endAt: slot.endAt,
+      dayOfWeek: slot.dayOfWeek,
+      startTimeLocal: slot.startTimeLocal,
+      endTimeLocal: slot.endTimeLocal,
+      createdAt: slot.createdAt,
+      updatedAt: slot.updatedAt,
+      user: {
+        id: slot.user_id,
+        firstName: slot.firstName,
+        lastName: slot.lastName,
+        username: slot.username,
+        photoUrl: slot.photoUrl,
+      },
+    }))
+
+    return NextResponse.json(formattedSlots)
+  } catch (error: any) {
     console.error('Error fetching slots:', error)
-    await prisma.$disconnect()
     return NextResponse.json(
-      { error: 'Failed to fetch slots' },
+      { error: 'Failed to fetch slots', details: error.message },
       { status: 500 }
     )
   }
@@ -76,35 +92,45 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!slotSchema.type.includes(type)) {
+    if (type !== 'ONE_TIME' && type !== 'CYCLIC_WEEKLY') {
       return NextResponse.json(
         { error: 'Invalid slot type' },
         { status: 400 }
       )
     }
 
-    const slot = await prisma.slot.create({
-      data: {
-        userId,
-        groupId,
-        type,
-        description,
-        startAt: startAt ? new Date(startAt) : null,
-        endAt: endAt ? new Date(endAt) : null,
-        dayOfWeek,
-        startTimeLocal,
-        endTimeLocal,
-      },
-    })
+    // Create slot using raw SQL
+    const slots = await db.$queryRaw`
+      INSERT INTO "Slot" ("id", "userId", "groupId", "type", "description", "startAt", "endAt", "dayOfWeek", "startTimeLocal", "endTimeLocal", "createdAt", "updatedAt")
+      VALUES (
+        gen_random_uuid()::text,
+        ${userId},
+        ${groupId},
+        ${type},
+        ${description || null},
+        ${startAt ? new Date(startAt) : null},
+        ${endAt ? new Date(endAt) : null},
+        ${dayOfWeek || null},
+        ${startTimeLocal || null},
+        ${endTimeLocal || null},
+        NOW(),
+        NOW()
+      )
+      RETURNING *
+    ` as any[]
 
-    await prisma.$disconnect()
+    const slot = slots[0]
 
-    return NextResponse.json(slot, { status: 201 })
-  } catch (error) {
+    // Serialize BigInt to string
+    const serialized = JSON.stringify(slot, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    )
+
+    return NextResponse.json(JSON.parse(serialized), { status: 201 })
+  } catch (error: any) {
     console.error('Error creating slot:', error)
-    await prisma.$disconnect()
     return NextResponse.json(
-      { error: 'Failed to create slot' },
+      { error: 'Failed to create slot', details: error.message },
       { status: 500 }
     )
   }

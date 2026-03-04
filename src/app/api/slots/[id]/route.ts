@@ -9,26 +9,21 @@ export async function DELETE(
   try {
     const { id } = await params
 
-    // For MVP, use a demo user ID
-    const userId = 'demo-user-id'
+    // Delete slot using raw SQL
+    const result = await db.$queryRaw`
+      DELETE FROM "Slot" WHERE "id" = ${id}
+      RETURNING "id"
+    ` as any[]
 
-    // Verify slot belongs to user and delete it
-    const result = await db.slot.deleteMany({
-      where: {
-        id,
-        userId,
-      },
-    })
-
-    if (result.count === 0) {
+    if (result.length === 0) {
       return NextResponse.json({ error: 'Slot not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ success: true, deleted: result.count })
-  } catch (error) {
+    return NextResponse.json({ success: true, deleted: 1 })
+  } catch (error: any) {
     console.error('Error deleting slot:', error)
     return NextResponse.json(
-      { error: 'Failed to delete slot', details: String(error) },
+      { error: 'Failed to delete slot', details: error.message },
       { status: 500 }
     )
   }

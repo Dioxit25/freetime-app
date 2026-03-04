@@ -82,6 +82,25 @@ export default function Home() {
 
   const daysOfWeek = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
 
+  // Helper function for Russian plural forms
+  const getNoun = (number: number, one: string, two: string, five: string) => {
+    const n = Math.abs(number)
+    const n10 = n % 10
+    const n100 = n % 100
+
+    if (n10 === 1 && n100 !== 11) {
+      return one
+    }
+    if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) {
+      return two
+    }
+    return five
+  }
+
+  const getParticipantsText = (count: number) => {
+    return `${count} ${getNoun(count, 'участник', 'участника', 'участников')}`
+  }
+
   // Initialize app
   useEffect(() => {
     initializeApp()
@@ -323,7 +342,7 @@ export default function Home() {
         }))
 
         for (const payload of payloads) {
-          await fetch('/api/slots', {
+          const response = await fetch('/api/slots', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -332,12 +351,17 @@ export default function Home() {
               ...payload,
             }),
           })
+
+          if (!response.ok) {
+            const errorText = await response.text()
+            throw new Error(errorText || 'Failed to save slot')
+          }
         }
       } else {
         const startD = new Date(`${date}T${startTime}:00`)
         const endD = new Date(`${date}T${endTime}:00`)
 
-        await fetch('/api/slots', {
+        const response = await fetch('/api/slots', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -351,6 +375,11 @@ export default function Home() {
             endTimeLocal: endTime,
           }),
         })
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(errorText || 'Failed to save slot')
+        }
       }
 
       toast({ title: 'Успешно', description: 'Время сохранено' })
@@ -362,8 +391,9 @@ export default function Home() {
       setStartTime('09:00')
       setEndTime('18:00')
       setSelectedDays([])
-    } catch (error) {
-      toast({ title: 'Ошибка', description: 'Не удалось сохранить', variant: 'destructive' })
+    } catch (error: any) {
+      console.error('Failed to save slot:', error)
+      toast({ title: 'Ошибка', description: error.message || 'Не удалось сохранить', variant: 'destructive' })
     } finally {
       setLoading(false)
     }
@@ -593,7 +623,7 @@ export default function Home() {
                     </div>
                     <div className="text-left">
                       <div className="font-semibold text-gray-900">{selectedGroup?.telegramTitle}</div>
-                      <div className="text-xs text-gray-500">{selectedGroup?.memberCount || 0} участников</div>
+                      <div className="text-xs text-gray-500">{getParticipantsText(selectedGroup?.memberCount || 0)}</div>
                     </div>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition ${groupMenuOpen ? 'rotate-180' : ''}`} />
@@ -619,7 +649,7 @@ export default function Home() {
                           </div>
                           <div className="text-left flex-1">
                             <div className="font-semibold text-gray-900">{group.telegramTitle}</div>
-                            <div className="text-xs text-gray-500">{group.memberCount} участников</div>
+                            <div className="text-xs text-gray-500">{getParticipantsText(group.memberCount)}</div>
                           </div>
                           {selectedGroup?.id === group.id && (
                             <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
@@ -871,7 +901,7 @@ export default function Home() {
                       Найдите общее свободное время с участниками группы
                     </p>
                     <p className="text-sm text-gray-500 mb-6">
-                      Группа: {selectedGroup?.telegramTitle} ({groupMembers.length} участников)
+                      Группа: {selectedGroup?.telegramTitle} ({getParticipantsText(groupMembers.length)})
                     </p>
                     <Button
                       onClick={handleFindCommonTime}
