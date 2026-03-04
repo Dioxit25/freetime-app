@@ -30,7 +30,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
-      isBot: telegramUser.is_bot || false,
+      // isBot removed until migration is applied
     },
     create: {
       telegramId: BigInt(telegramUser.id),
@@ -39,7 +39,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
-      isBot: telegramUser.is_bot || false,
+      // isBot removed until migration is applied
       timezone: 'Europe/Moscow',
     },
   })

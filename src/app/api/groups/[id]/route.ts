@@ -23,7 +23,7 @@ export async function GET(
 
     const group = groups[0]
 
-    // Get group members with user details (excluding bots)
+    // Get group members with user details (without isBot filter until migration is applied)
     const members = await db.$queryRaw`
       SELECT
         gm."id",
@@ -38,17 +38,12 @@ export async function GET(
       FROM "GroupMember" gm
       JOIN "User" u ON gm."userId" = u."id"
       WHERE gm."groupId" = ${id}
-        AND (u."isBot" IS NULL OR u."isBot" = false)
       ORDER BY gm."joinedAt" ASC
     ` as any[]
 
-    // Count members (excluding bots)
+    // Count members (without isBot filter until migration is applied)
     const memberCount = await db.$queryRaw`
-      SELECT COUNT(*) as count
-      FROM "GroupMember" gm
-      JOIN "User" u ON gm."userId" = u."id"
-      WHERE gm."groupId" = ${id}
-        AND (u."isBot" IS NULL OR u."isBot" = false)
+      SELECT COUNT(*) as count FROM "GroupMember" WHERE "groupId" = ${id}
     ` as any[]
 
     // Format members

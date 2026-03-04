@@ -53,15 +53,15 @@ export async function POST(request: NextRequest) {
 
     let user: any
     if (users.length === 0) {
-      // Create new user
+      // Create new user (without isBot until migration is applied)
       const newUsers = await db.$queryRaw`
-        INSERT INTO "User" ("id", "telegramId", "firstName", "lastName", "username", "photoUrl", "languageCode", "timezone", "isBot", "createdAt", "updatedAt")
-        VALUES (gen_random_uuid()::text, ${BigInt(id)}, ${firstName}, ${lastName || null}, ${username || null}, ${photoUrl || null}, ${languageCode || 'en'}, ${timezone || 'UTC'}, false, NOW(), NOW())
+        INSERT INTO "User" ("id", "telegramId", "firstName", "lastName", "username", "photoUrl", "languageCode", "timezone", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid()::text, ${BigInt(id)}, ${firstName}, ${lastName || null}, ${username || null}, ${photoUrl || null}, ${languageCode || 'en'}, ${timezone || 'UTC'}, NOW(), NOW())
         RETURNING *
       ` as any[]
       user = newUsers[0]
     } else {
-      // Update existing user
+      // Update existing user (without isBot until migration is applied)
       await db.$executeRaw`
         UPDATE "User" SET
           "firstName" = ${firstName},
@@ -70,7 +70,6 @@ export async function POST(request: NextRequest) {
           "photoUrl" = ${photoUrl || null},
           "languageCode" = ${languageCode || 'en'},
           "timezone" = ${timezone || 'UTC'},
-          "isBot" = COALESCE("isBot", false),
           "updatedAt" = NOW()
         WHERE "telegramId" = ${BigInt(id)}
       `
@@ -119,12 +118,7 @@ export async function POST(request: NextRequest) {
       SELECT
         gm."groupId",
         g.*,
-        (SELECT COUNT(*)
-         FROM "GroupMember" gm2
-         JOIN "User" u2 ON gm2."userId" = u2."id"
-         WHERE gm2."groupId" = g."id"
-           AND (u2."isBot" IS NULL OR u2."isBot" = false)
-        ) as "memberCount"
+        (SELECT COUNT(*) FROM "GroupMember" WHERE "groupId" = g."id") as "memberCount"
       FROM "GroupMember" gm
       JOIN "Group" g ON gm."groupId" = g."id"
       WHERE gm."userId" = ${user.id}
