@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
-
-const prisma = new PrismaClient()
+import { db } from '@/lib/db'
 
 // POST /api/auth/telegram - Authenticate user via Telegram
 export async function POST(request: NextRequest) {
@@ -47,28 +45,36 @@ export async function POST(request: NextRequest) {
     console.log('✅ Validation passed')
     console.log(`👤 User ID: ${id}, Name: ${firstName} ${lastName || ''}`)
 
-    // Find or create user
+    // Find or create user using raw SQL
     console.log('🔍 Looking up/creating user in database...')
-    const user = await prisma.user.upsert({
-      where: { telegramId: BigInt(id) },
-      update: {
-        firstName,
-        lastName: lastName || null,
-        username: username || null,
-        photoUrl: photoUrl || null,
-        languageCode: languageCode || 'en',
-        timezone: timezone || 'UTC',
-      },
-      create: {
-        telegramId: BigInt(id),
-        firstName,
-        lastName: lastName || null,
-        username: username || null,
-        photoUrl: photoUrl || null,
-        languageCode: languageCode || 'en',
-        timezone: timezone || 'UTC',
-      },
-    })
+    const users = await db.$queryRaw`
+      SELECT * FROM "User" WHERE "telegramId" = ${BigInt(id)} LIMIT 1
+    ` as any[]
+
+    let user: any
+    if (users.length === 0) {
+      // Create new user
+      const newUsers = await db.$queryRaw`
+        INSERT INTO "User" ("id", "telegramId", "firstName", "lastName", "username", "photoUrl", "languageCode", "timezone", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid()::text, ${BigInt(id)}, ${firstName}, ${lastName || null}, ${username || null}, ${photoUrl || null}, ${languageCode || 'en'}, ${timezone || 'UTC'}, NOW(), NOW())
+        RETURNING *
+      ` as any[]
+      user = newUsers[0]
+    } else {
+      // Update existing user
+      await db.$executeRaw`
+        UPDATE "User" SET
+          "firstName" = ${firstName},
+          "lastName" = ${lastName || null},
+          "username" = ${username || null},
+          "photoUrl" = ${photoUrl || null},
+          "languageCode" = ${languageCode || 'en'},
+          "timezone" = ${timezone || 'UTC'},
+          "updatedAt" = NOW()
+        WHERE "telegramId" = ${BigInt(id)}
+      `
+      user = users[0]
+    }
 
     console.log(`✅ User found/created: ${user.id} (Telegram ID: ${user.telegramId})`)
 
@@ -80,39 +86,23 @@ export async function POST(request: NextRequest) {
         console.log(`🔍 Chat ID type: ${typeof chatId}, value: ${chatId}`)
 
         // Find group by telegram chat ID
-        const group = await prisma.group.findUnique({
-          where: { telegramChatId: BigInt(chatId) },
-        })
+        const groups = await db.$queryRaw`
+          SELECT * FROM "Group" WHERE "telegramChatId" = ${BigInt(chatId)} LIMIT 1
+        ` as any[]
 
-        if (group) {
+        if (groups.length > 0) {
+          const group = groups[0]
           console.log(`✅ Group found: ${group.id} (${group.telegramTitle})`)
           // Add user to group if not already a member
-          await prisma.groupMember.upsert({
-            where: {
-              userId_groupId: {
-                userId: user.id,
-                groupId: group.id,
-              },
-            },
-            update: {},
-            create: {
-              userId: user.id,
-              groupId: group.id,
-            },
-          })
+          await db.$executeRaw`
+            INSERT INTO "GroupMember" ("id", "userId", "groupId", "joinedAt")
+            VALUES (gen_random_uuid()::text, ${user.id}, ${group.id}, NOW())
+            ON CONFLICT ("userId", "groupId")
+            DO NOTHING
+          `
           console.log(`✅ Added user ${user.id} to group ${group.id} (${group.telegramTitle})`)
         } else {
           console.log(`⚠️ Group not found for chat ID: ${chatId}`)
-          console.log('ℹ️ Existing groups in database:')
-          const allGroups = await prisma.group.findMany({
-            select: {
-              id: true,
-              telegramChatId: true,
-              telegramTitle: true,
-            },
-          })
-          console.log(JSON.stringify(allGroups, (key, value) =>
-            typeof value === 'bigint' ? value.toString() : value, 2))
         }
       } catch (err: any) {
         console.error('❌ Error adding user to group:', err)
@@ -122,39 +112,34 @@ export async function POST(request: NextRequest) {
       console.log('ℹ️ No chatId provided - app opened from private chat or WebApp not in group')
     }
 
-    // Get user's groups
+    // Get user's groups using raw SQL
     console.log('🔍 Fetching user groups from database...')
-    const memberships = await prisma.groupMember.findMany({
-      where: { userId: user.id },
-      include: {
-        group: {
-          include: {
-            _count: {
-              select: { members: true },
-            },
-          },
-        },
-      },
-    })
+    const memberships = await db.$queryRaw`
+      SELECT
+        gm."groupId",
+        g.*,
+        (SELECT COUNT(*) FROM "GroupMember" WHERE "groupId" = g."id") as "memberCount"
+      FROM "GroupMember" gm
+      JOIN "Group" g ON gm."groupId" = g."id"
+      WHERE gm."userId" = ${user.id}
+    ` as any[]
 
-    const groups = memberships.map((m) => ({
-      id: m.group.id,
-      telegramChatId: m.group.telegramChatId.toString(),
-      telegramTitle: m.group.telegramTitle,
-      telegramPhotoUrl: m.group.telegramPhotoUrl,
-      tier: m.group.tier,
-      memberCount: m.group._count.members,
-      joinedAt: m.joinedAt,
+    const groups = memberships.map((m: any) => ({
+      id: m.id,
+      telegramChatId: m.telegramChatId?.toString() || m.telegramChatId,
+      telegramTitle: m.telegramTitle,
+      telegramPhotoUrl: m.telegramPhotoUrl,
+      tier: m.tier,
+      memberCount: parseInt(m.memberCount || '0'),
+      joinedAt: m.joinedAt || new Date(),
     }))
 
     console.log(`✅ User has ${groups.length} groups:`, groups.map(g => g.telegramTitle))
 
-    await prisma.$disconnect()
-
     const responseData = {
       user: {
         id: user.id,
-        telegramId: user.telegramId.toString(),
+        telegramId: user.telegramId?.toString() || user.telegramId,
         firstName: user.firstName,
         lastName: user.lastName,
         username: user.username,
@@ -179,7 +164,6 @@ export async function POST(request: NextRequest) {
     console.error('Error stack:', error.stack)
     console.error('Error name:', error.name)
     console.error('========================================')
-    await prisma.$disconnect()
     return NextResponse.json(
       { error: 'Authentication failed', details: error.message },
       { status: 500 }
