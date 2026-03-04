@@ -23,7 +23,7 @@ export async function GET(
 
     const group = groups[0]
 
-    // Get group members with user details
+    // Get group members with user details (excluding bots)
     const members = await db.$queryRaw`
       SELECT
         gm."id",
@@ -38,12 +38,17 @@ export async function GET(
       FROM "GroupMember" gm
       JOIN "User" u ON gm."userId" = u."id"
       WHERE gm."groupId" = ${id}
+        AND (u."isBot" IS NULL OR u."isBot" = false)
       ORDER BY gm."joinedAt" ASC
     ` as any[]
 
-    // Count members
+    // Count members (excluding bots)
     const memberCount = await db.$queryRaw`
-      SELECT COUNT(*) as count FROM "GroupMember" WHERE "groupId" = ${id}
+      SELECT COUNT(*) as count
+      FROM "GroupMember" gm
+      JOIN "User" u ON gm."userId" = u."id"
+      WHERE gm."groupId" = ${id}
+        AND (u."isBot" IS NULL OR u."isBot" = false)
     ` as any[]
 
     // Format members

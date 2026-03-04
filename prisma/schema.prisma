@@ -16,6 +16,7 @@ model User {
   username     String?
   firstName    String
   lastName     String?
+  isBot        Boolean       @default(false)
   timezone     String        @default("UTC")
   languageCode String?       @default("en")
   photoUrl     String?

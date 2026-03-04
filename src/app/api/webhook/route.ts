@@ -30,6 +30,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
+      isBot: telegramUser.is_bot || false,
     },
     create: {
       telegramId: BigInt(telegramUser.id),
@@ -38,6 +39,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
+      isBot: telegramUser.is_bot || false,
       timezone: 'Europe/Moscow',
     },
   })
