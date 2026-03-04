@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  telegramId   BigInt        @unique
+  username     String?
+  firstName    String
+  lastName     String?
+  timezone     String        @default("UTC")
+  languageCode String?       @default("en")
+  photoUrl     String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  slots        Slot[]
+  memberships  GroupMember[]
+}
+
+model Group {
+  id              String        @id @default(cuid())
+  telegramChatId  BigInt        @unique
+  telegramTitle   String
+  telegramPhotoUrl String?
+  tier            String        @default("FREE") // FREE, GROUP_PRO, BUSINESS
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  members         GroupMember[]
+  slots           Slot[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  userId    String
+  groupId   String
+  joinedAt  DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+model Slot {
+  id              String   @id @default(cuid())
+  userId          String
+  groupId         String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group           Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  type            String   // ONE_TIME or CYCLIC_WEEKLY
+  description     String?
+
+  // For ONE_TIME slots
+  startAt         DateTime?
+  endAt           DateTime?
+
+  // For CYCLIC_WEEKLY slots
+  dayOfWeek       Int?     // 0-6 (Sunday-Saturday)
+  startTimeLocal  String?  // HH:MM format
+  endTimeLocal    String?  // HH:MM format
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([startAt])
+}
+
+model WebhookLog {
+  id          String   @id @default(cuid())
+  updateId    BigInt?
+  eventType   String?
+  telegramUserId  BigInt?
+  telegramChatId  BigInt?
+  payload     String   @db.Text
+  response    String?  @db.Text
+  error       String?  @db.Text
+  processedAt DateTime @default(now())
+
+  @@index([telegramChatId])
+  @@index([eventType])
+  @@index([processedAt])
+}
