@@ -95,10 +95,25 @@ export default function Home() {
   }, [selectedGroup, user])
 
   const initializeApp = async () => {
+    console.log('🚀 App initialization started...')
+
     try {
+      // Wait a moment for Telegram WebApp SDK to load
+      await new Promise(resolve => setTimeout(resolve, 100))
+
       // Try to get Telegram WebApp user data
       let tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user
       let tgChat = (window as any).Telegram?.WebApp?.initDataUnsafe?.chat
+
+      console.log('📱 Telegram WebApp SDK check:', {
+        hasTelegram: !!(window as any).Telegram,
+        hasWebApp: !!((window as any).Telegram?.WebApp),
+        hasInitDataUnsafe: !!((window as any).Telegram?.WebApp?.initDataUnsafe),
+        hasUser: !!tgUser,
+        hasChat: !!tgChat,
+        user: tgUser,
+        chat: tgChat,
+      })
 
       // If Telegram.WebApp is not available, try to parse from URL hash
       if (!tgUser && window.location.hash.includes('tgWebAppData')) {
@@ -210,12 +225,26 @@ export default function Home() {
         if (data.groups && data.groups.length > 0) {
           setSelectedGroup(data.groups[0])
           console.log(`📂 Selected group: ${data.groups[0].telegramTitle}`)
+        } else {
+          // Create personal group if user has no groups
+          console.log('ℹ️ User has no groups yet')
         }
       } else {
-        console.error('❌ Auth failed:', response.status, await response.text())
+        const errorText = await response.text()
+        console.error('❌ Auth failed:', response.status, errorText)
+        toast({
+          title: 'Ошибка авторизации',
+          description: `Не удалось выполнить вход: ${errorText}`,
+          variant: 'destructive',
+        })
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Auth error:', error)
+      toast({
+        title: 'Ошибка сети',
+        description: error.message || 'Не удалось подключиться к серверу',
+        variant: 'destructive',
+      })
     }
   }
 
