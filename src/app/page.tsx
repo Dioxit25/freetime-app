@@ -63,7 +63,6 @@ export default function Home() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<any[]>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -71,8 +70,7 @@ export default function Home() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [initializing, setInitializing] = useState(true)
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
-
-  // Form state
+  const [savingSlot, setSavingSlot] = useState(false)
   const [slotType, setSlotType] = useState<SlotType>('ONE_TIME')
   const [description, setDescription] = useState('')
   const [date, setDate] = useState('')
@@ -270,7 +268,6 @@ export default function Home() {
   const loadGroupData = async () => {
     if (!selectedGroup || !user) return
 
-    setLoading(true)
     try {
       // Load group details with members
       const groupResponse = await fetch(`/api/groups/${selectedGroup.id}`)
@@ -289,8 +286,6 @@ export default function Home() {
       await loadSlots()
     } catch (error) {
       console.error('Error loading group data:', error)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -329,7 +324,7 @@ export default function Home() {
       return
     }
 
-    setLoading(true)
+    setSavingSlot(true)
 
     try {
       if (slotType === 'CYCLIC_WEEKLY') {
@@ -395,7 +390,7 @@ export default function Home() {
       console.error('Failed to save slot:', error)
       toast({ title: 'Ошибка', description: error.message || 'Не удалось сохранить', variant: 'destructive' })
     } finally {
-      setLoading(false)
+      setSavingSlot(false)
     }
   }
 
@@ -826,10 +821,10 @@ export default function Home() {
 
                         <Button
                           onClick={handleSaveSlot}
-                          disabled={loading}
+                          disabled={savingSlot}
                           className="w-full"
                         >
-                          {loading ? 'Сохранение...' : 'Сохранить'}
+                          {savingSlot ? 'Сохранение...' : 'Сохранить'}
                         </Button>
                       </div>
                     </DialogContent>
