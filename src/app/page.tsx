@@ -293,6 +293,7 @@ export default function Home() {
     if (!selectedGroup || !user) return
 
     try {
+      console.log('📂 Loading slots for group:', selectedGroup.id, 'user:', user.id)
       const response = await fetch(`/api/slots?groupId=${selectedGroup.id}&userId=${user.id}`)
       if (response.ok) {
         const data = await response.json()
@@ -302,9 +303,13 @@ export default function Home() {
           endAt: slot.endAt ? new Date(slot.endAt) : undefined,
         }))
         setSlots(slotsWithDates)
+        console.log(`✅ Loaded ${slotsWithDates.length} slots`)
+      } else {
+        const errorText = await response.text()
+        console.error('❌ Failed to load slots:', response.status, errorText)
       }
     } catch (error) {
-      console.error('Failed to load slots:', error)
+      console.error('❌ Failed to load slots:', error)
     }
   }
 
@@ -360,10 +365,17 @@ export default function Home() {
 
           if (!response.ok) {
             const errorText = await response.text()
-            console.error('❌ Failed to save cyclic slot:', errorText)
-            throw new Error(errorText || 'Failed to save slot')
+            const errorData = errorText ? JSON.parse(errorText) : {}
+            console.error('❌ Failed to save cyclic slot:', {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorText,
+              errorData,
+            })
+            throw new Error(errorData.error || errorData.details || errorText || 'Failed to save slot')
           }
-          console.log('✅ Cyclic slot saved')
+          const result = await response.json()
+          console.log('✅ Cyclic slot saved:', result)
         }
       } else {
         const startD = new Date(`${date}T${startTime}:00`)
@@ -390,12 +402,18 @@ export default function Home() {
 
         if (!response.ok) {
           const errorText = await response.text()
-          console.error('❌ Failed to save slot:', errorText)
-          throw new Error(errorText || 'Failed to save slot')
+          const errorData = errorText ? JSON.parse(errorText) : {}
+          console.error('❌ Failed to save one-time slot:', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorText,
+            errorData,
+          })
+          throw new Error(errorData.error || errorData.details || errorText || 'Failed to save slot')
         }
 
         const result = await response.json()
-        console.log('✅ Slot saved:', result)
+        console.log('✅ One-time slot saved:', result)
       }
 
       toast({ title: 'Успешно', description: 'Время сохранено' })
