@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const payloadStr = JSON.stringify(body)
 
-    console.log('=== WEBHOOK RECEIVED ===')
+    console.log('=== WEBHOOK RECEIVED v2 ===')
     console.log('Update ID:', body.update_id)
     console.log('Has message:', !!body.message)
     console.log('Has callback_query:', !!body.callback_query)
