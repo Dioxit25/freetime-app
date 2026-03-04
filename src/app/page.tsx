@@ -1052,7 +1052,7 @@ export default function Home() {
                         </div>
                         <div className="flex-1">
                           <div className="font-medium">{group.telegramTitle}</div>
-                          <div className="text-xs text-gray-500">{group.memberCount} участников</div>
+                          <div className="text-xs text-gray-500">{getParticipantsText(group.memberCount)}</div>
                         </div>
                         {group.tier === 'FREE' && (
                           <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">Бесплатно</span>
