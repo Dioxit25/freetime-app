@@ -71,7 +71,43 @@ export async function POST(request: NextRequest) {
 
       const WEB_APP_URL = process.env.WEB_APP_URL || 'https://freetime-app-jy3k.vercel.app'
 
-      if (text === '/test' || text === '/setup2') {
+      if (text === '/start') {
+        console.log('Sending /start welcome message...')
+
+        const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '👋 Добро пожаловать в TimeAgree!\n\n📱 Это бот для управления вашим временем и поиска общих свободных моментов с группой.\n\n🚀 Откройте приложение, чтобы начать:',
+            reply_markup: {
+              inline_keyboard: [[{
+                text: '🌐 Открыть TimeAgree',
+                web_app: { url: WEB_APP_URL }
+              }]]
+            }
+          }),
+        })
+
+        const responseText = await response.text()
+        console.log('Telegram response:', response.ok, response.status)
+        console.log('Response body:', responseText)
+
+        responseData = {
+          ok: true,
+          command: '/start',
+          telegramResponse: { ok: response.ok, status: response.status, body: responseText }
+        }
+
+        await saveWebhookLog({
+          updateId: body.update_id ? BigInt(body.update_id) : undefined,
+          eventType,
+          telegramUserId: telegramUserId ? BigInt(telegramUserId) : undefined,
+          telegramChatId: telegramChatId ? BigInt(telegramChatId) : undefined,
+          payload: payloadStr,
+          response: JSON.stringify(responseData),
+        })
+      } else if (text === '/test' || text === '/setup2') {
         const isTest = text === '/test'
 
         console.log('Sending message to Telegram...')
