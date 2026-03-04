@@ -161,19 +161,13 @@ export async function POST(request: NextRequest) {
 
         console.log('✅ Group created/updated:', group.id, group.telegramTitle)
 
-        // Send welcome message to the group
+        // Send welcome message to the group (without web_app button)
         await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chat.id,
-            text: `🎉 Бот добавлен в группу "${chat.title || 'Группа'}"!\n\n📱 Откройте приложение, чтобы начать управлять временем:`,
-            reply_markup: {
-              inline_keyboard: [[{
-                text: '🌐 Открыть TimeAgree',
-                web_app: { url: WEB_APP_URL }
-              }]]
-            }
+            text: `🎉 Бот добавлен в группу "${chat.title || 'Группа'}"!\n\n📱 Нажмите на имя бота и выберите "Открыть WebApp" или используйте приложение из личных сообщений с ботом.`,
           }),
         })
 
@@ -229,21 +223,29 @@ export async function POST(request: NextRequest) {
       if (text === '/start') {
         console.log('Sending /start welcome message...')
 
+        const isPrivate = chatType === 'private'
+
+        const messageBody: any = {
+          chat_id: chatId,
+          text: isPrivate
+            ? '👋 Добро пожаловать в TimeAgree!\n\n📱 Это бот для управления вашим временем и поиска общих свободных моментов с группой.\n\n🔹 Добавьте бота в группу, чтобы начать совместное планирование\n🔹 Откройте приложение, чтобы управлять своим временем'
+            : `👋 Привет, ${from.first_name}!\n\n📱 Бот TimeAgree работает в этой группе!\n\nОткройте приложение через меню бота или используйте кнопку ниже, чтобы начать управлять временем:`,
+        }
+
+        // Only add web_app button for private chats
+        if (isPrivate) {
+          messageBody.reply_markup = {
+            inline_keyboard: [[{
+              text: '🌐 Открыть TimeAgree',
+              web_app: { url: WEB_APP_URL }
+            }]]
+          }
+        }
+
         const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: chatType === 'private'
-              ? '👋 Добро пожаловать в TimeAgree!\n\n📱 Это бот для управления вашим временем и поиска общих свободных моментов с группой.\n\n🔹 Добавьте бота в группу, чтобы начать совместное планирование\n🔹 Откройте приложение, чтобы управлять своим временем'
-              : `👋 Привет, ${from.first_name}!\n\n📱 Бот TimeAgree работает в этой группе. Откройте приложение, чтобы начать:`,
-            reply_markup: {
-              inline_keyboard: [[{
-                text: '🌐 Открыть TimeAgree',
-                web_app: { url: WEB_APP_URL }
-              }]]
-            }
-          }),
+          body: JSON.stringify(messageBody),
         })
 
         const responseText = await response.text()
@@ -270,19 +272,27 @@ export async function POST(request: NextRequest) {
 
         console.log('Sending message to Telegram...')
 
+        const messageBody: any = {
+          chat_id: chatId,
+          text: isTest ? '✅ Бот работает!' : '🎉 Кнопка для открытия приложения:',
+        }
+
+        // Only add web_app button for private chats
+        if (!isTest && chatType === 'private') {
+          messageBody.reply_markup = {
+            inline_keyboard: [[{
+              text: '🌐 Открыть TimeAgree',
+              web_app: { url: WEB_APP_URL }
+            }]]
+          }
+        } else if (!isTest) {
+          messageBody.text = '🎉 Бот работает! Откройте приложение через меню бота.'
+        }
+
         const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: isTest ? '✅ Бот работает!' : '🎉 Кнопка для открытия приложения:',
-            reply_markup: isTest ? undefined : {
-              inline_keyboard: [[{
-                text: '🌐 Открыть TimeAgree',
-                web_app: { url: WEB_APP_URL }
-              }]]
-            }
-          }),
+          body: JSON.stringify(messageBody),
         })
 
         const responseText = await response.text()
