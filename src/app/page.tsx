@@ -258,6 +258,12 @@ export default function Home() {
       if (groupResponse.ok) {
         const data = await groupResponse.json()
         setGroupMembers(data.members || [])
+
+        // Update selectedGroup with fresh memberCount from API
+        setSelectedGroup(prev => prev ? {
+          ...prev,
+          memberCount: data.group?.memberCount || prev.memberCount
+        } : null)
       }
 
       // Load slots for group
@@ -587,7 +593,7 @@ export default function Home() {
                     </div>
                     <div className="text-left">
                       <div className="font-semibold text-gray-900">{selectedGroup?.telegramTitle}</div>
-                      <div className="text-xs text-gray-500">{groupMembers.length} участников</div>
+                      <div className="text-xs text-gray-500">{selectedGroup?.memberCount || 0} участников</div>
                     </div>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition ${groupMenuOpen ? 'rotate-180' : ''}`} />
@@ -985,16 +991,21 @@ export default function Home() {
                     </div>
                   </div>
                   <a
-                    href="https://t.me/TimeAgreeBot?startgroup=true"
+                    href="https://t.me/TimeAgreeBot"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Добавить в группу</span>
+                    <span>Открыть чат с ботом</span>
                   </a>
-                  <p className="text-xs text-blue-600 mt-2">
-                    После добавления откройте приложение из группы
+                  <p className="text-xs text-blue-600 mt-3 leading-relaxed">
+                    <strong>Как добавить бота в группу:</strong><br/>
+                    1. Откройте группу в Telegram<br/>
+                    2. Перейдите в настройки группы → Добавить участника<br/>
+                    3. Найдите @TimeAgreeBot и добавьте<br/>
+                    4. Отправьте команду /start в группе<br/>
+                    5. Откройте приложение через меню бота
                   </p>
                 </div>
 

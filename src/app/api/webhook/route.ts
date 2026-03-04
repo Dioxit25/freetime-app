@@ -331,6 +331,65 @@ export async function POST(request: NextRequest) {
           response: JSON.stringify(responseData),
         })
       }
+    } else if (body.message && (body.message.new_chat_members || body.message.left_chat_member)) {
+      // Handle new/leaving members in group
+      const message = body.message
+      const chatId = message.chat.id
+      const chat = message.chat
+
+      if (chat.type === 'group' || chat.type === 'supergroup') {
+        const from = message.from
+        const user = await getOrCreateUser(from)
+
+        // Ensure group exists
+        const group = await createOrUpdateGroup(chat, user.id)
+
+        // Handle new members joining
+        if (message.new_chat_members) {
+          for (const member of message.new_chat_members) {
+            if (!member.is_bot) {
+              const memberUser = await getOrCreateUser(member)
+
+              // Add member to group
+              await db.$executeRaw`
+                INSERT INTO "GroupMember" ("id", "userId", "groupId", "joinedAt")
+                VALUES (gen_random_uuid()::text, ${memberUser.id}, ${group.id}, NOW())
+                ON CONFLICT ("userId", "groupId")
+                DO NOTHING
+              `
+
+              console.log(`✅ Added member ${memberUser.firstName} to group ${chat.title}`)
+            }
+          }
+        }
+
+        // Handle member leaving
+        if (message.left_chat_member && !message.left_chat_member.is_bot) {
+          const leavingMember = message.left_chat_member
+          const leavingUser = await getOrCreateUser(leavingMember)
+
+          // Remove member from group
+          await db.$executeRaw`
+            DELETE FROM "GroupMember" WHERE "userId" = ${leavingUser.id} AND "groupId" = ${group.id}
+          `
+
+          console.log(`✅ Removed member ${leavingUser.firstName} from group ${chat.title}`)
+        }
+
+        responseData = {
+          ok: true,
+          action: 'member_changed',
+        }
+      }
+
+      await saveWebhookLog({
+        updateId: body.update_id ? BigInt(body.update_id) : undefined,
+        eventType,
+        telegramUserId: telegramUserId ? BigInt(telegramUserId) : undefined,
+        telegramChatId: telegramChatId ? BigInt(telegramChatId) : undefined,
+        payload: payloadStr,
+        response: JSON.stringify(responseData),
+      })
     } else {
       console.log('No text message to process')
 
