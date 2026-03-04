@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
     const responseData = {
       user: {
         id: user.id,
-        telegramId: user.telegramId,
+        telegramId: user.telegramId.toString(),
         firstName: user.firstName,
         lastName: user.lastName,
         username: user.username,
@@ -166,7 +166,8 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('📤 Sending response:')
-    console.log(JSON.stringify(responseData, null, 2))
+    console.log(JSON.stringify(responseData, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value, 2))
     console.log('========================================')
     console.log('🔐 AUTH REQUEST COMPLETED')
     console.log('========================================')
