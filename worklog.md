@@ -1640,3 +1640,144 @@
 - 🔄 Task 40: Проверка конфликтов - ЧАСТИЧНО (детектор готов, интеграция в API нужна)
 - 📋 Следующие шаги: миграция базы данных, интеграция с UI
 
+
+---
+
+## Task 36-40: Деплой в Vercel - В ПРОЦЕССЕ
+
+**Дата**: 2026-03-05 11:45
+**Автор**: Z.ai Code
+
+### Что сделано:
+1. ✅ Код запушен в GitHub:
+   - Ветка: master (commit: d685724)
+   - Ветка: main (commit: d685724)
+   - Тег: v1.0.0-calendar
+
+2. ✅ Создан GitHub Action для деплоя (`.github/workflows/deploy.yml`)
+
+3. ✅ Создан файл `DEPLOYMENT.md` с инструкциями
+
+### Статус Vercel:
+- **URL**: https://freetime-app-jy3k.vercel.app
+- **Автодеплой**: Код запушен, ожидание завершения деплоя
+- **Статус API**: `/api/migrate-events` возвращает 404 (деплой ещё не завершён)
+
+### Инструкция для пользователя (из DEPLOYMENT.md):
+
+#### 1. Проверить деплой:
+```bash
+curl "https://freetime-app-jy3k.vercel.app/api/migrate-events" -H "Content-Type: application/json"
+```
+
+Если возвращает JSON - деплой завершён!
+Если возвращает 404 - подождать ещё несколько минут
+
+#### 2. Применить миграцию (после успешного деплоя):
+```bash
+curl -X POST "https://freetime-app-jy3k.vercel.app/api/migrate-events" \
+  -H "Content-Type: application/json" \
+  -d '{"confirm": true, "migrateSlots": false}'
+```
+
+#### 3. Протестировать Events API (после миграции):
+```bash
+curl "https://freetime-app-jy3k.vercel.app/api/events?groupId=YOUR_GROUP_ID"
+```
+
+### Файлы, задеплоенные в GitHub:
+- `prisma/schema.prisma` - обновлена схема
+- `src/lib/timezone.ts` - утилиты timezone
+- `src/lib/event-generator.ts` - генератор событий
+- `src/lib/conflict-detector.ts` - детектор конфликтов
+- `src/app/api/events/route.ts` - API событий
+- `src/app/api/events/[id]/route.ts` - API отдельного события
+- `src/app/api/migrate-events/route.ts` - API миграции
+- `.github/workflows/deploy.yml` - GitHub Action
+- `DEPLOYMENT.md` - инструкции по деплою
+
+### Следующие шаги:
+1. Дождаться завершения автодеплоя Vercel
+2. Пользователь должен проверить и применить миграцию
+3. Протестировать работу Events API
+4. После успешного тестирования - мигрировать существующие слоты
+5. Продолжить с Tasks 38, 39, 41, 42...
+
+---
+
+## Последнее обновление
+**Дата**: 2026-03-05 11:45
+**Автор**: Z.ai Code
+**Статус**:
+- ✅ GitHub: код запушен (master, main, тег v1.0.0-calendar)
+- ⏳ Vercel: автодеплой в процессе
+- 📋 Пользователю: проверить деплой и применить миграцию (см. DEPLOYMENT.md)
+
+
+---
+
+## Deployment Issue - Vercel Autodeploy Failed
+
+**Дата**: 2026-03-05 13:00
+**Автор**: Z.ai Code
+
+### Проблема:
+- ✅ Код запушен в GitHub (коммиты: d685724, 6384aa1, 969c124)
+- ❌ Vercel автодеплой не сработал
+- ❌ Лимит API деплоев исчерпан (>100 за день)
+- ❌ Последний деплой: 2 часа назад (старый коммит f210074)
+- ❌ Лимит сбросится через ~9 часов
+
+### Решения для пользователя:
+
+**Вариант 1 - Проверить локально** (рекомендуется):
+1. Запустить локальный сервер: `cd /home/z/my-project && bun run dev`
+2. Открыть http://localhost:3000
+3. В консоли браузера выполнить:
+   ```javascript
+   // Проверка статуса миграции
+   fetch('http://localhost:3000/api/migrate-events', {
+     headers: { 'Content-Type': 'application/json' }
+   }).then(r => r.json()).then(console.log)
+
+   // Применение миграции
+   fetch('http://localhost:3000/api/migrate-events', {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify({ confirm: true, migrateSlots: false })
+   }).then(r => r.json()).then(console.log)
+   ```
+
+**Вариант 2 - Дождаться 9 часов**:
+Лимит API деплоев сбросится автоматически. После этого я смогу задеплоить через Vercel CLI или API.
+
+**Вариант 3 - Отдельный сервис**:
+Я могу создать отдельный сервис на порту 3001 для проверки новых API (Events, Migration).
+
+### Что уже реализовано и готово к тестированию:
+
+Бэкенд:
+- ✅ `src/lib/timezone.ts` - утилиты для работы с timezone
+- ✅ `src/lib/event-generator.ts` - генератор событий с правилами повторения
+- ✅ `src/lib/conflict-detector.ts` - детектор конфликтов (HARD/SOFT режимы)
+- ✅ `src/app/api/events/route.ts` - API событий (GET, POST)
+- ✅ `src/app/api/events/[id]/route.ts` - API отдельного события (GET, PUT, DELETE)
+- ✅ `src/app/api/migrate-events/route.ts` - API миграции базы данных
+
+База данных:
+- ✅ `prisma/schema.prisma` - обновлена схема (Event, EventException, Reminder)
+
+### Документация:
+- ✅ `DEPLOYMENT_ISSUE.md` - инструкции для проверки
+
+---
+
+## Последнее обновление
+**Дата**: 2026-03-05 13:05
+**Автор**: Z.ai Code
+**Статус**:
+- ✅ GitHub: код запушен (коммиты d685724, 6384aa1, 969c124)
+- ❌ Vercel: автодеплой не сработал, лимит API деплоев исчерпан
+- 📋 Создана документация `DEPLOYMENT_ISSUE.md` с инструкциями
+- 🔄 Ожидается выбор решения пользователя (локальная проверка / ожидание / отдельный сервис)
+
