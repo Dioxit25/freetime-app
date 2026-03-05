@@ -789,11 +789,19 @@
 ---
 
 ## Последнее обновление
-**Дата**: 2026-03-05 02:45
+**Дата**: 2026-03-05 02:50
 **Автор**: Z.ai Code
 **Статус**:
 - ✅ Исправлены кракозябры в описании слота (упрощена логика поля ввода)
 - ✅ Упрощено добавление бота в группу (использован ?startgroup=true)
-- ⏳ Ожидается деплой для применения изменений
+- ✅ Код залит на GitHub (коммит: 1260cd3)
+- ✅ Деплой на Vercel выполнен успешно (READY)
+- 🌐 Production: https://freetime-app-jy3k.vercel.app
+
+### Информация о деплое
+- **Время**: 2026-03-05 ~08:28 UTC
+- **Коммит**: 1260cd3348d6c067455e71d0f4f5c34d55870842
+- **Сообщение**: "fix: remove encoding issues in slot description and simplify bot group addition"
+- **URL деплоя**: freetime-app-jy3k-rby9l6whh-dioxits-projects.vercel.app
 
 ---
