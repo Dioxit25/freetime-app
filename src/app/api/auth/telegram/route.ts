@@ -53,15 +53,15 @@ export async function POST(request: NextRequest) {
 
     let user: any
     if (users.length === 0) {
-      // Create new user (without isBot until migration is applied)
+      // Create new user
       const newUsers = await db.$queryRaw`
-        INSERT INTO "User" ("id", "telegramId", "firstName", "lastName", "username", "photoUrl", "languageCode", "timezone", "createdAt", "updatedAt")
-        VALUES (gen_random_uuid()::text, ${BigInt(id)}, ${firstName}, ${lastName || null}, ${username || null}, ${photoUrl || null}, ${languageCode || 'en'}, ${timezone || 'UTC'}, NOW(), NOW())
+        INSERT INTO "User" ("id", "telegramId", "firstName", "lastName", "username", "photoUrl", "languageCode", "timezone", "isBot", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid()::text, ${BigInt(id)}, ${firstName}, ${lastName || null}, ${username || null}, ${photoUrl || null}, ${languageCode || 'en'}, ${timezone || 'UTC'}, false, NOW(), NOW())
         RETURNING *
       ` as any[]
       user = newUsers[0]
     } else {
-      // Update existing user (without isBot until migration is applied)
+      // Update existing user
       await db.$executeRaw`
         UPDATE "User" SET
           "firstName" = ${firstName},
@@ -112,16 +112,22 @@ export async function POST(request: NextRequest) {
       console.log('ℹ️ No chatId provided - app opened from private chat or WebApp not in group')
     }
 
-    // Get user's groups using raw SQL
+    // Get user's groups using raw SQL (only active groups, excluding bots from count)
     console.log('🔍 Fetching user groups from database...')
     const memberships = await db.$queryRaw`
       SELECT
         gm."groupId",
         g.*,
-        (SELECT COUNT(*) FROM "GroupMember" WHERE "groupId" = g."id") as "memberCount"
+        (SELECT COUNT(*)
+         FROM "GroupMember" gm2
+         JOIN "User" u ON gm2."userId" = u."id"
+         WHERE gm2."groupId" = g."id"
+           AND (u."isBot" IS NULL OR u."isBot" = false)
+        ) as "memberCount"
       FROM "GroupMember" gm
       JOIN "Group" g ON gm."groupId" = g."id"
       WHERE gm."userId" = ${user.id}
+        AND g."telegramChatId" IS NOT NULL
     ` as any[]
 
     const groups = memberships.map((m: any) => ({

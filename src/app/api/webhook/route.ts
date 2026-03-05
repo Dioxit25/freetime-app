@@ -30,7 +30,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
-      // isBot removed until migration is applied
+      isBot: telegramUser.is_bot || false,
     },
     create: {
       telegramId: BigInt(telegramUser.id),
@@ -39,7 +39,7 @@ async function getOrCreateUser(telegramUser: any): Promise<any> {
       username: telegramUser.username,
       photoUrl: telegramUser.photo_url,
       languageCode: telegramUser.language_code,
-      // isBot removed until migration is applied
+      isBot: telegramUser.is_bot || false,
       timezone: 'Europe/Moscow',
     },
   })
@@ -183,7 +183,24 @@ export async function POST(request: NextRequest) {
       else if (newStatus === 'left' && (oldStatus === 'member' || oldStatus === 'administrator')) {
         console.log('👋 Bot was removed from group:', chat.title || chat.id)
 
-        // Optionally: mark group as inactive or keep it in database
+        // Get group by telegramChatId
+        const groups = await db.$queryRaw`
+          SELECT "id" FROM "Group" WHERE "telegramChatId" = ${BigInt(chat.id)} LIMIT 1
+        ` as any[]
+
+        if (groups.length > 0) {
+          const groupId = groups[0].id
+
+          // Mark group as inactive by setting telegramChatId to NULL
+          await db.$executeRaw`
+            UPDATE "Group"
+            SET "telegramChatId" = NULL, "updatedAt" = NOW()
+            WHERE "id" = ${groupId}
+          `
+
+          console.log(`✅ Group ${groupId} marked as inactive`)
+        }
+
         responseData = {
           ok: true,
           action: 'bot_removed_from_group',
