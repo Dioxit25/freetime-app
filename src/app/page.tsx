@@ -856,11 +856,8 @@ export default function Home() {
                           <Label>Описание</Label>
                           <Input
                             placeholder="Например: Работа, Встреча"
-                            value={getCleanDescription(description)}
-                            onChange={(e) => {
-                              const catPrefix = slotCategories[slotCategory].prefix
-                              setDescription(catPrefix ? `${catPrefix} ${e.target.value}` : e.target.value)
-                            }}
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
                           />
                         </div>
 
@@ -1127,27 +1124,22 @@ export default function Home() {
                     <Users className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                     <div className="flex-1">
                       <h3 className="font-semibold text-blue-900 mb-1">Добавить бота в группу</h3>
-                      <p className="text-sm text-blue-700 mb-3">
-                        Добавьте бота в Telegram-группу, чтобы управлять временем с друзьями и коллегами
+                      <p className="text-sm text-blue-700">
+                        Нажмите кнопку ниже, выберите группу и добавьте бота
                       </p>
                     </div>
                   </div>
                   <a
-                    href="https://t.me/TimeAgreeBot"
+                    href="https://t.me/TimeAgreeBot?startgroup=true"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Открыть чат с ботом</span>
+                    <span>Добавить бота в группу</span>
                   </a>
-                  <p className="text-xs text-blue-600 mt-3 leading-relaxed">
-                    <strong>Как добавить бота в группу:</strong><br/>
-                    1. Откройте группу в Telegram<br/>
-                    2. Перейдите в настройки группы → Добавить участника<br/>
-                    3. Найдите @TimeAgreeBot и добавьте<br/>
-                    4. Отправьте команду /start в группе<br/>
-                    5. Откройте приложение через меню бота
+                  <p className="text-xs text-blue-600 mt-3">
+                    После добавления отправьте <kbd className="px-1.5 py-0.5 bg-blue-100 rounded">/start</kbd> в группе
                   </p>
                 </div>
 
