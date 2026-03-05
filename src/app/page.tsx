@@ -90,7 +90,10 @@ export default function Home() {
   const [endTime, setEndTime] = useState('18:00')
   const [selectedDays, setSelectedDays] = useState<number[]>([])
 
-  const daysOfWeek = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+  const daysOfWeek = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+
+  // Convert JavaScript day (0=Sunday, 1=Monday...) to Monday-first display index (0=Monday, 6=Sunday)
+  const jsDayToDisplayDay = (jsDay: number) => (jsDay + 6) % 7
 
   // Get slot category from description
   const getSlotCategory = (desc?: string): SlotCategory => {
@@ -566,7 +569,8 @@ export default function Home() {
   const renderCalendar = () => {
     const year = selectedDate.getFullYear()
     const month = selectedDate.getMonth()
-    const firstDay = new Date(year, month, 1).getDay()
+    // Convert Sunday (0) to Monday-first week: Monday=0, Sunday=6
+    const firstDay = (new Date(year, month, 1).getDay() + 6) % 7
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const today = new Date()
 
@@ -887,18 +891,18 @@ export default function Home() {
                           <div>
                             <Label className="mb-2 block">Дни недели</Label>
                             <div className="flex gap-1">
-                              {[1, 2, 3, 4, 5, 6, 0].map(day => (
+                              {[1, 2, 3, 4, 5, 6, 0].map(jsDay => (
                                 <button
-                                  key={day}
-                                  onClick={() => toggleDay(day)}
+                                  key={jsDay}
+                                  onClick={() => toggleDay(jsDay)}
                                   className={`flex-1 py-2 text-xs font-bold rounded-lg transition border
-                                    ${selectedDays.includes(day)
+                                    ${selectedDays.includes(jsDay)
                                       ? 'bg-blue-500 border-blue-400 text-white'
                                       : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200'
                                     }
                                   `}
                                 >
-                                  {daysOfWeek[day]}
+                                  {daysOfWeek[jsDayToDisplayDay(jsDay)]}
                                 </button>
                               ))}
                             </div>
@@ -1039,7 +1043,10 @@ export default function Home() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setSearchResults(null)}
+                        onClick={() => {
+                          setSearchResults(null)
+                          handleFindCommonTime()
+                        }}
                       >
                         Новый поиск
                       </Button>

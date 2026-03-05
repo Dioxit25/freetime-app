@@ -286,6 +286,58 @@ export async function POST(request: NextRequest) {
           payload: payloadStr,
           response: JSON.stringify(responseData),
         })
+      } else if (text === '/help') {
+        console.log('Sending /help message...')
+
+        const helpText = `📖 *Справочник команд TimeAgree*
+
+Доступные команды:
+
+/start - Запуск бота и получение приветственного сообщения
+/test - Проверка работы бота
+/setup2 - Открыть приложение
+/help - Показать это справочное сообщение
+
+💡 *Как использовать:*
+
+1. Добавьте бота в группу
+2. Откройте приложение через меню бота
+3. Создайте занятые слоты
+4. Найдите общее свободное время с участниками
+
+🌐 *Открыть приложение:* Нажмите на имя бота → "Открыть WebApp"
+
+_Для работы приложения необходимо добавить бота в группу и авторизоваться_`
+
+        const messageBody: any = {
+          chat_id: chatId,
+          text: helpText,
+          parse_mode: 'Markdown',
+        }
+
+        const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(messageBody),
+        })
+
+        const responseText = await response.text()
+        console.log('Telegram response:', response.ok, response.status)
+
+        responseData = {
+          ok: true,
+          command: '/help',
+          chatType,
+        }
+
+        await saveWebhookLog({
+          updateId: body.update_id ? BigInt(body.update_id) : undefined,
+          eventType,
+          telegramUserId: telegramUserId ? BigInt(telegramUserId) : undefined,
+          telegramChatId: telegramChatId ? BigInt(telegramChatId) : undefined,
+          payload: payloadStr,
+          response: JSON.stringify(responseData),
+        })
       } else if (text === '/test' || text === '/setup2') {
         const isTest = text === '/test'
 
