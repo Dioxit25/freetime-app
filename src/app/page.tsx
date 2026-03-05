@@ -382,12 +382,30 @@ export default function Home() {
     try {
       // Add category prefix to description
       const categoryPrefix = slotCategories[slotCategory].prefix
-      const descriptionWithPrefix = categoryPrefix ? `${categoryPrefix} ${getCleanDescription(description)}` : getCleanDescription(description)
+      const cleanDesc = getCleanDescription(description)
+      let descriptionToSave: string | null = null
+
+      if (cleanDesc && categoryPrefix) {
+        // Если есть и описание, и категория - добавляем префикс
+        descriptionToSave = `${categoryPrefix} ${cleanDesc}`
+      } else if (cleanDesc) {
+        // Если есть только описание, сохраняем как есть
+        descriptionToSave = cleanDesc
+      } else if (categoryPrefix) {
+        // Если нет описания, но есть категория - сохраняем только префикс (без пробела)
+        descriptionToSave = categoryPrefix
+      }
+      // Иначе оставляем NULL (не сохраняем пустые описания)
+
+      console.log('📝 Description to save:', descriptionToSave)
+      console.log('📝 Original description:', description)
+      console.log('📝 Clean description:', cleanDesc)
+      console.log('📝 Category prefix:', categoryPrefix)
 
       if (slotType === 'CYCLIC_WEEKLY') {
         const payloads = selectedDays.map(day => ({
           type: 'CYCLIC_WEEKLY',
-          description: descriptionWithPrefix,
+          description: descriptionToSave,
           dayOfWeek: day,
           startTimeLocal: startTime,
           endTimeLocal: endTime,
@@ -427,7 +445,7 @@ export default function Home() {
           userId: user.id,
           groupId: selectedGroup.id,
           type: 'ONE_TIME',
-          description: descriptionWithPrefix,
+          description: descriptionToSave,
           startAt: startD.toISOString(),
           endAt: endD.toISOString(),
           startTimeLocal: startTime,
@@ -489,17 +507,25 @@ export default function Home() {
       slotType: slotToDelete.type,
       deleteAllCyclic,
       description: slotToDelete.description,
+      dayOfWeek: slotToDelete.dayOfWeek,
+      startTimeLocal: slotToDelete.startTimeLocal,
+      endTimeLocal: slotToDelete.endTimeLocal,
     })
 
     setDeleteLoading(true)
 
     try {
       if (deleteAllCyclic && slotToDelete.type === 'CYCLIC_WEEKLY' && slotToDelete.description) {
+        // "Удалить все дни этой записи" - удаляем все слоты с тем же описанием, днём недели и временем
         const allCyclicSlots = slots.filter(
-          s => s.type === 'CYCLIC_WEEKLY' && s.description === slotToDelete.description
+          s => s.type === 'CYCLIC_WEEKLY' 
+            && s.description === slotToDelete.description
+            && s.dayOfWeek === slotToDelete.dayOfWeek
+            && s.startTimeLocal === slotToDelete.startTimeLocal
+            && s.endTimeLocal === slotToDelete.endTimeLocal
         )
 
-        console.log(`🗑️ Deleting ${allCyclicSlots.length} cyclic slots`)
+        console.log(`🗑️ Deleting ${allCyclicSlots.length} cyclic slots with same parameters`)
 
         for (const slot of allCyclicSlots) {
           const response = await fetch(`/api/slots/${slot.id}`, { method: 'DELETE' })
@@ -515,7 +541,8 @@ export default function Home() {
           description: `Удалено ${allCyclicSlots.length} записей`,
         })
       } else {
-        console.log(`🗑️ Deleting single slot: ${slotToDelete.id}`)
+        // "Удалить эту запись" - удаляем только выбранный слот (по ID), независимо от типа
+        console.log(`🗑️ Deleting selected slot only: ${slotToDelete.id}`)
         const response = await fetch(`/api/slots/${slotToDelete.id}`, { method: 'DELETE' })
         
         if (!response.ok) {
@@ -523,8 +550,13 @@ export default function Home() {
           throw new Error('Failed to delete slot')
         }
         
-        console.log('✅ Slot deleted successfully')
-        toast({ title: 'Успешно', description: 'Время удалено' })
+        console.log('✅ Selected slot deleted successfully')
+        toast({ 
+          title: 'Успешно', 
+          description: slotToDelete.type === 'CYCLIC_WEEKLY' 
+            ? 'Циклическая запись удалена (только этот день недели)' 
+            : 'Время удалено' 
+        })
       }
 
       setDeleteDialogOpen(false)
@@ -1306,9 +1338,9 @@ export default function Home() {
                         <div className="flex items-center gap-3">
                           <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                           <div className="text-left">
-                            <div className="font-medium">Только этот день</div>
+                            <div className="font-medium">Удалить эту запись</div>
                             <div className="text-xs text-gray-500">
-                              {daysOfWeek[selectedDate.getDay()]}
+                              Только этот день ({daysOfWeek[jsDayToDisplayDay(selectedDate.getDay())]})
                             </div>
                           </div>
                         </div>
@@ -1322,14 +1354,17 @@ export default function Home() {
                         <div className="flex items-center gap-3">
                           <div className="w-2 h-2 rounded-full bg-red-500"></div>
                           <div className="text-left">
-                            <div className="font-medium text-red-700">Все дни этой записи</div>
+                            <div className="font-medium text-red-700">Удалить все дни этой записи</div>
                             <div className="text-xs text-red-600">
                               Удалить все {
                                 slots.filter(s =>
                                   s.type === 'CYCLIC_WEEKLY' &&
-                                  s.description === slotToDelete.description
+                                  s.description === slotToDelete.description &&
+                                  s.dayOfWeek === slotToDelete.dayOfWeek &&
+                                  s.startTimeLocal === slotToDelete.startTimeLocal &&
+                                  s.endTimeLocal === slotToDelete.endTimeLocal
                                 ).length
-                              } повторений
+                              } повторений ({daysOfWeek[jsDayToDisplayDay(slotToDelete.dayOfWeek || 0)]})
                             </div>
                           </div>
                         </div>
