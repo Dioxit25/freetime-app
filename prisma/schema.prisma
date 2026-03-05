@@ -23,7 +23,12 @@ model User {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
+  // Conflict resolution settings
+  conflictMode String        @default("SOFT") // HARD, SOFT
+
   slots        Slot[]
+  events       Event[]
+  reminders    Reminder[]
   memberships  GroupMember[]
 }
 
@@ -39,6 +44,8 @@ model Group {
 
   members         GroupMember[]
   slots           Slot[]
+  events          Event[]
+  conflicts       Conflict[]
 }
 
 model GroupMember {
@@ -96,4 +103,121 @@ model WebhookLog {
   @@index([telegramChatId])
   @@index([eventType])
   @@index([processedAt])
+}
+
+model Conflict {
+  id            String   @id @default(cuid())
+  groupId       String
+  group         Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  eventId1      String?  // Event that conflicts with eventId2
+  eventId2      String?  // Event that conflicts with eventId1
+  userId        String   // User who has the conflict
+  startTime     DateTime
+  endTime       DateTime
+  severity      String   @default("WARNING") // WARNING, ERROR
+  resolved      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([groupId])
+  @@index([userId])
+}
+
+// Event model - enhanced version of Slot with full calendar features
+model Event {
+  id              String          @id @default(cuid())
+  userId          String
+  groupId         String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group           Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  // Event status
+  status          String          @default("CONFIRMED") // CONFIRMED, CANCELLED, DRAFT, ARCHIVED
+
+  // Event type
+  type            String          // ONE_TIME, CYCLIC_WEEKLY, CYCLIC_CUSTOM
+  description     String?
+
+  // All-day events (birthdays, holidays, vacations)
+  isAllDay        Boolean         @default(false)
+
+  // For ONE_TIME events (stored in UTC)
+  startAt         DateTime?
+  endAt           DateTime?
+
+  // For CYCLIC_WEEKLY events (time in UTC, dayOfWeek in local timezone)
+  dayOfWeek       Int?            // 0-6 (Sunday-Saturday, JavaScript format)
+  startTime       String?         // HH:MM format (UTC)
+  endTime         String?         // HH:MM format (UTC)
+
+  // Recurrence rules
+  recurrenceRule  String?         // DAILY, WEEKLY, BIWEEKLY, MONTHLY, YEARLY, CUSTOM
+  recurrenceDays  String?         // JSON array of days (e.g., [0, 1, 2, 3, 4] for weekdays)
+  recurrenceUntil DateTime?       // End date for recurrence
+
+  // Conflict resolution and sync
+  version         Int             @default(0)
+  lastModifiedBy  String?         // userId of last modifier
+  lastModifiedAt  DateTime        @default(now())
+  isGenerated     Boolean         @default(false) // True for generated instances
+
+  // Event category (from slot categories)
+  category        String?         // work, study, sport, leisure, other
+
+  // Metadata
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  exceptions      EventException[]
+  reminders       Reminder[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([startAt])
+  @@index([status])
+  @@index([type])
+}
+
+// Event exceptions for recurring events
+model EventException {
+  id            String   @id @default(cuid())
+  eventId       String
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Original planned date/time
+  originalDate  DateTime
+  originalStart DateTime?
+  originalEnd   DateTime?
+
+  // New date/time (NULL if cancelled)
+  newDate       DateTime?
+  newStart      DateTime?
+  newEnd        DateTime?
+
+  isCancelled   Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+
+  @@index([eventId])
+  @@index([originalDate])
+}
+
+// Reminder notifications
+model Reminder {
+  id           String   @id @default(cuid())
+  eventId      String
+  userId       String
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  minutesBefore Int     @default(30) // 15, 30, 60, 1440 (1 day)
+  isSent       Boolean  @default(false)
+  sentAt       DateTime?
+
+  createdAt    DateTime @default(now())
+
+  @@index([eventId])
+  @@index([userId])
+  @@index([isSent])
 }
