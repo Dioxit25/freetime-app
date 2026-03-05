@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Calendar, Clock, Settings, Plus, LogOut, Search, Users, User, ChevronDown, Loader2, Copy, Building2, BookOpen, Dumbbell, Gamepad2 } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import React from 'react'
+import { Calendar, Clock, Settings, Plus, LogOut, Search, Users, User, ChevronDown, Loader2, Copy, Building2, BookOpen, Dumbbell, Gamepad2, TrendingUp, BarChart3, Filter, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -89,6 +90,15 @@ export default function Home() {
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('18:00')
   const [selectedDays, setSelectedDays] = useState<number[]>([])
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false)
+  const [slotToCopy, setSlotToCopy] = useState<Slot | null>(null)
+  const [copyDate, setCopyDate] = useState('')
+  const [copyAllWeek, setCopyAllWeek] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterCategory, setFilterCategory] = useState<SlotCategory | 'all'>('all')
+  const [hoveredDate, setHoveredDate] = useState<Date | null>(null)
+  const [showQuickView, setShowQuickView] = useState(false)
+  const quickViewRef = useRef<HTMLDivElement>(null)
 
   const daysOfWeek = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
@@ -130,6 +140,149 @@ export default function Home() {
   const getParticipantsText = (count: number) => {
     return `${count} ${getNoun(count, 'участник', 'участника', 'участников')}`
   }
+
+  // Quick templates for common time slots
+  const quickTemplates = [
+    { name: 'Рабочий день', startTime: '09:00', endTime: '18:00', category: 'work' as SlotCategory, icon: Building2 },
+    { name: 'Учёба', startTime: '09:00', endTime: '15:00', category: 'study' as SlotCategory, icon: BookOpen },
+    { name: 'Спорт', startTime: '18:00', endTime: '20:00', category: 'sport' as SlotCategory, icon: Dumbbell },
+    { name: 'Вечер', startTime: '20:00', endTime: '23:00', category: 'leisure' as SlotCategory, icon: Gamepad2 },
+  ]
+
+  // Apply quick template
+  const applyTemplate = (template: typeof quickTemplates[0]) => {
+    setSlotCategory(template.category)
+    setStartTime(template.startTime)
+    setEndTime(template.endTime)
+  }
+
+  // Copy slot to another day
+  const openCopyDialog = (slot: Slot) => {
+    setSlotToCopy(slot)
+    setCopyDate('')
+    setCopyAllWeek(false)
+    setCopyDialogOpen(true)
+  }
+
+  const handleCopySlot = async () => {
+    if (!slotToCopy || !user || !selectedGroup) return
+
+    if (user.id === 'demo-user' || selectedGroup.id === 'demo-group') {
+      toast({
+        title: 'Демо режим',
+        description: 'В демо режиме нельзя копировать слоты',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    if (copyAllWeek) {
+      // Copy to all days of week
+      for (let jsDay = 1; jsDay <= 5; jsDay++) {
+        const response = await fetch('/api/slots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.id,
+            groupId: selectedGroup.id,
+            type: 'CYCLIC_WEEKLY',
+            description: slotToCopy.description,
+            dayOfWeek: jsDay,
+            startTimeLocal: slotToCopy.startTimeLocal,
+            endTimeLocal: slotToCopy.endTimeLocal,
+          }),
+        })
+        if (!response.ok) {
+          throw new Error('Не удалось скопировать слот')
+        }
+      }
+      toast({ title: 'Успешно', description: 'Слот скопирован на рабочие дни недели' })
+    } else {
+      if (!copyDate) {
+        toast({ title: 'Ошибка', description: 'Выберите дату', variant: 'destructive' })
+        return
+      }
+      const startD = new Date(`${copyDate}T${slotToCopy.startTimeLocal}:00`)
+      const endD = new Date(`${copyDate}T${slotToCopy.endTimeLocal}:00`)
+      const response = await fetch('/api/slots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          groupId: selectedGroup.id,
+          type: 'ONE_TIME',
+          description: slotToCopy.description,
+          startAt: startD.toISOString(),
+          endAt: endD.toISOString(),
+          startTimeLocal: slotToCopy.startTimeLocal,
+          endTimeLocal: slotToCopy.endTimeLocal,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error('Не удалось скопировать слот')
+      }
+      toast({ title: 'Успешно', description: 'Слот скопирован' })
+    }
+
+    setCopyDialogOpen(false)
+    setSlotToCopy(null)
+    loadSlots()
+  }
+
+  // Filter slots based on search query and category
+  const getFilteredSlots = (date?: Date) => {
+    let filteredSlots = date ? getSlotsForDate(date) : slots
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      filteredSlots = filteredSlots.filter(slot => {
+        const cleanDesc = getCleanDescription(slot.description).toLowerCase()
+        return cleanDesc.includes(query)
+      })
+    }
+
+    if (filterCategory !== 'all') {
+      filteredSlots = filteredSlots.filter(slot => {
+        const category = getSlotCategory(slot.description)
+        return category === filterCategory
+      })
+    }
+
+    return filteredSlots
+  }
+
+  // Get statistics for current month
+  const getMonthlyStats = () => {
+    const stats: Record<SlotCategory, number> = {
+      work: 0,
+      study: 0,
+      sport: 0,
+      leisure: 0,
+      other: 0,
+    }
+
+    const year = selectedDate.getFullYear()
+    const month = selectedDate.getMonth()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day)
+      const daySlots = getSlotsForDate(date)
+      daySlots.forEach(slot => {
+        const category = getSlotCategory(slot.description)
+        if (slot.startTimeLocal && slot.endTimeLocal) {
+          const [sh, sm] = slot.startTimeLocal.split(':').map(Number)
+          const [eh, em] = slot.endTimeLocal.split(':').map(Number)
+          const minutes = (eh * 60 + em) - (sh * 60 + sm)
+          stats[category] += Math.max(0, minutes)
+        }
+      })
+    }
+
+    return stats
+  }
+
+  const monthlyStats = getMonthlyStats()
 
   // Initialize app
   useEffect(() => {
@@ -683,11 +836,22 @@ export default function Home() {
       const isSelected = date.toDateString() === selectedDate.toDateString()
       const busyness = getDayBusyness(date)
       const hasSlots = busyness > 0
+      const daySlots = getSlotsForDate(date)
 
       days.push(
         <button
           key={day}
           onClick={() => setSelectedDate(date)}
+          onMouseEnter={() => {
+            if (daySlots.length > 0) {
+              setHoveredDate(date)
+              setShowQuickView(true)
+            }
+          }}
+          onMouseLeave={() => {
+            setHoveredDate(null)
+            setShowQuickView(false)
+          }}
           className={`h-11 w-full rounded-lg flex items-center justify-center text-sm font-medium transition-all relative overflow-hidden
             ${isSelected ? 'bg-blue-500 text-white shadow-lg' : ''}
             ${!isSelected && hasSlots ? 'bg-gray-50' : ''}
@@ -758,7 +922,7 @@ export default function Home() {
     return `${mins}м`
   }
 
-  const monthlySlots = getSlotsForDate(selectedDate)
+  const filteredSlots = getFilteredSlots(selectedDate)
 
   if (initializing) {
     return (
@@ -909,9 +1073,52 @@ export default function Home() {
               </CardContent>
             </Card>
 
+            {/* Quick View Popup */}
+            {showQuickView && hoveredDate && (
+              <div 
+                ref={quickViewRef}
+                className="fixed z-50 bg-white rounded-lg shadow-xl border p-4 w-64"
+                style={{
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                }}
+              >
+                <div className="font-medium text-sm mb-2 text-gray-900">
+                  {hoveredDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                </div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {getSlotsForDate(hoveredDate).map(slot => {
+                    const category = getSlotCategory(slot.description)
+                    const categoryData = slotCategories[category]
+                    const Icon = categoryData.icon
+                    const cleanDesc = getCleanDescription(slot.description)
+
+                    return (
+                      <div key={slot.id} className={`flex items-start gap-2 p-2 rounded-lg ${categoryData.bgColor}`}>
+                        <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${categoryData.textColor}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-xs font-medium ${categoryData.textColor} truncate`}>
+                            {cleanDesc || (slot.type === 'CYCLIC_WEEKLY' ? 'Каждую неделю' : 'Разово')}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {slot.startTimeLocal} - {slot.endTimeLocal}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {getSlotsForDate(hoveredDate).length === 0 && (
+                    <div className="text-center text-xs text-gray-500 py-2">
+                      В этот день вы свободны ✨
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between mb-4">
                   <CardTitle>
                     Занятость на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
                   </CardTitle>
@@ -960,6 +1167,32 @@ export default function Home() {
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                           />
+                        </div>
+
+                        <div>
+                          <Label>Быстрые шаблоны</Label>
+                          <div className="grid grid-cols-4 gap-2 mt-2">
+                            {quickTemplates.map((template) => {
+                              const Icon = template.icon
+                              return (
+                                <button
+                                  key={template.name}
+                                  onClick={() => applyTemplate(template)}
+                                  className={`flex flex-col items-center gap-1 p-2 rounded-lg border-2 transition hover:border-blue-300 ${
+                                    slotCategory === template.category && 
+                                    startTime === template.startTime && 
+                                    endTime === template.endTime
+                                      ? 'bg-blue-50 border-blue-300'
+                                      : 'bg-white border-gray-200'
+                                  }`}
+                                  title={`${template.name}: ${template.startTime} - ${template.endTime}`}
+                                >
+                                  <Icon className={`w-4 h-4 ${template.icon === Building2 ? 'text-blue-500' : template.icon === BookOpen ? 'text-green-500' : template.icon === Dumbbell ? 'text-orange-500' : 'text-purple-500'}`} />
+                                  <span className="text-xs font-medium text-gray-600">{template.name}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
                         </div>
 
                         <div>
@@ -1038,13 +1271,41 @@ export default function Home() {
                 </div>
               </CardHeader>
               <CardContent>
-                {monthlySlots.length === 0 ? (
+                {/* Search and Filter */}
+                <div className="space-y-3 mb-4">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <Input
+                        placeholder="Поиск по описанию..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-9"
+                      />
+                    </div>
+                    <Select value={filterCategory} onValueChange={(v: SlotCategory | 'all') => setFilterCategory(v)}>
+                      <SelectTrigger className="w-[140px]">
+                        <Filter className="w-4 h-4 mr-2 text-gray-400" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Все</SelectItem>
+                        {(Object.keys(slotCategories) as SlotCategory[]).map(cat => (
+                          <SelectItem key={cat} value={cat}>{slotCategories[cat].label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardContent>
+              <CardContent>
+                {filteredSlots.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
-                    В этот день вы свободны ✨
+                    {searchQuery || filterCategory !== 'all' ? 'Ничего не найдено 🔍' : 'В этот день вы свободны ✨'}
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {monthlySlots.map(slot => {
+                    {filteredSlots.map(slot => {
                       const isCyclic = slot.type === 'CYCLIC_WEEKLY'
                       const category = getSlotCategory(slot.description)
                       const categoryData = slotCategories[category]
@@ -1080,19 +1341,88 @@ export default function Home() {
                               </div>
                             </div>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openDeleteDialog(slot)}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                          >
-                            Удалить
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openCopyDialog(slot)}
+                              className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                              title="Копировать"
+                            >
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openDeleteDialog(slot)}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            >
+                              Удалить
+                            </Button>
+                          </div>
                         </div>
                       )
                     })}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+
+            {/* Statistics Card */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5" />
+                    Статистика за месяц
+                  </CardTitle>
+                  <div className="text-sm text-gray-500">
+                    {selectedDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {(Object.keys(monthlyStats) as SlotCategory[]).map(category => {
+                    const minutes = monthlyStats[category]
+                    const hours = Math.floor(minutes / 60)
+                    const percentage = minutes > 0 ? Math.round((minutes / (30 * 60)) * 100) : 0 // 30 дней по 1 часу = 100%
+                    const categoryData = slotCategories[category]
+                    const Icon = categoryData.icon
+
+                    if (minutes === 0) return null
+
+                    return (
+                      <div key={category} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <Icon className={`w-4 h-4 ${categoryData.textColor}`} />
+                            <span className="font-medium">{categoryData.label}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-600">
+                              {hours > 0 ? `${hours}ч ${minutes % 60}м` : `${minutes}м`}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              ({percentage}%)
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${categoryData.bgColor.replace('bg-', 'bg-')} transition-all duration-500`}
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {Object.values(monthlyStats).every(v => v === 0) && (
+                    <div className="text-center py-6 text-gray-500 text-sm">
+                      Нет данных за этот месяц
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1345,6 +1675,60 @@ export default function Home() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Copy Slot Dialog */}
+        <Dialog open={copyDialogOpen} onOpenChange={setCopyDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Копировать слот</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {slotToCopy && (
+                <>
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${slotCategories[getSlotCategory(slotToCopy.description)].bgColor}`}>
+                        {React.createElement(slotCategories[getSlotCategory(slotToCopy.description)].icon, { className: `w-5 h-5 ${slotCategories[getSlotCategory(slotToCopy.description)].textColor}` })}
+                      </div>
+                      <div>
+                        <div className="font-medium">{getCleanDescription(slotToCopy.description) || (slotToCopy.type === 'CYCLIC_WEEKLY' ? 'Каждую неделю' : 'Разово')}</div>
+                        <div className="text-xs text-gray-500">{slotToCopy.startTimeLocal} - {slotToCopy.endTimeLocal}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="copyAllWeek"
+                      checked={copyAllWeek}
+                      onChange={(e) => setCopyAllWeek(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor="copyAllWeek" className="text-sm cursor-pointer">
+                      Копировать на все рабочие дни недели (Пн-Пт)
+                    </label>
+                  </div>
+
+                  {!copyAllWeek && (
+                    <div>
+                      <Label>Дата</Label>
+                      <Input
+                        type="date"
+                        value={copyDate}
+                        onChange={(e) => setCopyDate(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  <Button onClick={handleCopySlot} className="w-full">
+                    Копировать
+                  </Button>
+                </>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Delete Confirmation Dialog */}
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
