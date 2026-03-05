@@ -174,6 +174,9 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ User and group verified, creating slot...')
+    console.log('📝 Description to save:', description)
+    console.log('📝 Description length:', description?.length)
+    console.log('📝 Description bytes:', Buffer.from(description || '').toString('hex'))
 
     // Create slot using raw SQL
     const slots = await db.$queryRaw`
@@ -202,6 +205,8 @@ export async function POST(request: NextRequest) {
       userId: slot.userId,
       groupId: slot.groupId,
       type: slot.type,
+      description: slot.description,
+      descriptionLength: slot.description?.length,
     })
 
     // Serialize BigInt to string

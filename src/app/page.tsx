@@ -484,6 +484,13 @@ export default function Home() {
   const handleConfirmDelete = async (deleteAllCyclic: boolean = false) => {
     if (!slotToDelete) return
 
+    console.log('🗑️ Deleting slot:', {
+      slotId: slotToDelete.id,
+      slotType: slotToDelete.type,
+      deleteAllCyclic,
+      description: slotToDelete.description,
+    })
+
     setDeleteLoading(true)
 
     try {
@@ -492,8 +499,15 @@ export default function Home() {
           s => s.type === 'CYCLIC_WEEKLY' && s.description === slotToDelete.description
         )
 
+        console.log(`🗑️ Deleting ${allCyclicSlots.length} cyclic slots`)
+
         for (const slot of allCyclicSlots) {
-          await fetch(`/api/slots/${slot.id}`, { method: 'DELETE' })
+          const response = await fetch(`/api/slots/${slot.id}`, { method: 'DELETE' })
+          if (!response.ok) {
+            console.error(`❌ Failed to delete slot ${slot.id}:`, response.status)
+          } else {
+            console.log(`✅ Deleted slot ${slot.id}`)
+          }
         }
 
         toast({
@@ -501,7 +515,15 @@ export default function Home() {
           description: `Удалено ${allCyclicSlots.length} записей`,
         })
       } else {
-        await fetch(`/api/slots/${slotToDelete.id}`, { method: 'DELETE' })
+        console.log(`🗑️ Deleting single slot: ${slotToDelete.id}`)
+        const response = await fetch(`/api/slots/${slotToDelete.id}`, { method: 'DELETE' })
+        
+        if (!response.ok) {
+          console.error('❌ Failed to delete slot:', response.status)
+          throw new Error('Failed to delete slot')
+        }
+        
+        console.log('✅ Slot deleted successfully')
         toast({ title: 'Успешно', description: 'Время удалено' })
       }
 
@@ -509,6 +531,7 @@ export default function Home() {
       setSlotToDelete(null)
       await loadSlots()
     } catch (error) {
+      console.error('❌ Delete error:', error)
       toast({ title: 'Ошибка', description: 'Не удалось удалить', variant: 'destructive' })
     } finally {
       setDeleteLoading(false)
@@ -1178,6 +1201,61 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Database Cleanup Section */}
+                <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="p-2 rounded-lg bg-orange-100">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-orange-900 mb-1">Очистка базы данных</h3>
+                      <p className="text-sm text-orange-700">
+                        Удалите неактивные группы и связанные данные
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (confirm('Вы уверены, что хотите удалить неактивные группы? Это действие нельзя отменить.')) {
+                        try {
+                          const response = await fetch('/api/cleanup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              deleteInactiveGroups: true,
+                              confirm: true,
+                            }),
+                          })
+                          
+                          if (response.ok) {
+                            const data = await response.json()
+                            toast({
+                              title: 'Успешно',
+                              description: data.message,
+                            })
+                            loadGroupData()
+                          } else {
+                            throw new Error('Failed to cleanup')
+                          }
+                        } catch (error) {
+                          toast({
+                            title: 'Ошибка',
+                            description: 'Не удалось выполнить очистку',
+                            variant: 'destructive',
+                          })
+                        }
+                      }
+                    }}
+                    className="w-full"
+                  >
+                    Очистить неактивные группы
+                  </Button>
+                </div>
+
                 <Button
                   variant="outline"
                   className="w-full gap-2"
@@ -1187,7 +1265,7 @@ export default function Home() {
                   }}
                 >
                   <LogOut className="w-4 h-4" />
-                  Очистить данные
+                  Очистить кэш браузера
                 </Button>
               </CardContent>
             </Card>
