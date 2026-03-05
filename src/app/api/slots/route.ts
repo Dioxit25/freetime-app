@@ -207,6 +207,7 @@ export async function POST(request: NextRequest) {
       type: slot.type,
       description: slot.description,
       descriptionLength: slot.description?.length,
+      descriptionBytes: slot.description ? Buffer.from(slot.description).toString('hex').slice(0, 50) + (slot.description.length > 50 ? '...' : '') : '',
     })
 
     // Serialize BigInt to string
