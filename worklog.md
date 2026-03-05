@@ -1781,3 +1781,63 @@ curl "https://freetime-app-jy3k.vercel.app/api/events?groupId=YOUR_GROUP_ID"
 - 📋 Создана документация `DEPLOYMENT_ISSUE.md` с инструкциями
 - 🔄 Ожидается выбор решения пользователя (локальная проверка / ожидание / отдельный сервис)
 
+
+---
+
+## Task 27: Добавление документации по деплою и event service
+
+**Дата**: 2026-03-05 13:30
+**Автор**: Z.ai Code
+
+**Задача**: Добавить полную документацию для деплоя и отдельно стоящий event service
+
+**Что сделано**:
+- ✅ Создан `DEPLOYMENT.md` - полные инструкции по деплою на Vercel
+  - Инструкция по проверке статуса миграции
+  - Пошаговое руководство по применению миграции
+  - Инструкция по тестированию Events API
+  - Troubleshooting раздел
+- ✅ Создан `DEPLOYMENT_ISSUE.md` - документация проблемы с лимитом Vercel
+  - Описание текущей ситуации
+  - Временные решения (дождаться / проверить локально / отдельный сервис)
+  - Инструкция по локальному тестированию
+- ✅ Создан `MIGRATION_PLAN.md` - план рефакторинга на Event модель
+  - Концептуальная архитектура (Event, RepetitionRule, Reminder)
+  - План миграции данных
+  - План реализации всех фич
+- ✅ Создан `mini-services/event-service/` - отдельный сервис
+  - `package.json` - зависимости (bun, @prisma/client, typescript)
+  - `tsconfig.json` - конфигурация TypeScript
+  - `prisma/schema.prisma` - схема базы данных
+  - `README.md` - полная документация сервиса
+  - `.gitignore` - исключения для node_modules и др.
+- ✅ Обновлён `worklog.md` с информацией о всех задачах
+
+**GitHub Actions**:
+- ⚠️ `.github/workflows/deploy.yml` создан, но не запушен
+- Причина: GitHub требует `workflow` scope для PAT (Personal Access Token)
+- Файл сохранён локально, будет добавлен позже с правильным токеном
+
+**Коммит**: `f579ac5` - "docs: add deployment documentation, migration plan, and event service"
+
+**Файлы добавлены в GitHub**:
+- `DEPLOYMENT.md` - 160 строк
+- `DEPLOYMENT_ISSUE.md` - 112 строк
+- `MIGRATION_PLAN.md` - 246 строк
+- `mini-services/event-service/` - весь сервис
+- `worklog.md` - обновлён
+
+**Статус**: ✅ Завершено и запушено на GitHub
+
+---
+
+## Последнее обновление
+**Дата**: 2026-03-05 13:30
+**Автор**: Z.ai Code
+**Статус**:
+- ✅ Все файлы документации созданы и запушены на GitHub (commit f579ac5)
+- ✅ Event service создан и готов к использованию
+- ✅ GitHub Actions workflow готов (требует токен с workflow scope)
+- 📋 Пользователь: когда Vercel лимит сбросится, можно будет задеплоить
+- 📋 Все исправления из предыдущих задач готовы и находятся в GitHub
+
