@@ -1,0 +1,5 @@
+(node:2901) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+🤖 Telegram bot started on port 3001
+📱 Web App URL: https://freetime-app-jy3k.vercel.app
+🔗 Bot username: @TimeAgreeBot
