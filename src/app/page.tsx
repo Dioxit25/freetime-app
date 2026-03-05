@@ -105,10 +105,11 @@ export default function Home() {
     return 'other'
   }
 
-  // Get clean description without prefix
+  // Get clean description without prefix - removes emojis and special characters
   const getCleanDescription = (desc?: string): string => {
     if (!desc) return ''
-    return desc.replace(/^[🏢📚🏃🎮]\s*/, '')
+    // Remove emojis and special characters, keep only letters, digits, spaces and basic punctuation
+    return desc.replace(/[^\p{L}\p{N}\s\.,;:!?@%$&*()_+=\-\[\]{}'"`<>`~`^|/\\]/g, '').trim()
   }
 
   // Helper function for Russian plural forms
@@ -526,7 +527,6 @@ export default function Home() {
       deleteAllRepetitions,
       description: slotToDelete.description,
       dayOfWeek: slotToDelete.dayOfWeek,
-      selectedDateDayOfWeek: selectedDate.getDay(),
       startTimeLocal: slotToDelete.startTimeLocal,
       endTimeLocal: slotToDelete.endTimeLocal,
     })
@@ -535,16 +535,15 @@ export default function Home() {
 
     try {
       if (deleteAllRepetitions && slotToDelete.type === 'CYCLIC_WEEKLY' && slotToDelete.description) {
-        // "Удалить все повторения" - удаляем все циклические слоты с теми же параметрами
+        // "Удалить все повторения" - удаляем ВСЕ слоты с этим описанием и временем на ВСЕ дни недели
         const allRepetitions = slots.filter(
           s => s.type === 'CYCLIC_WEEKLY' 
             && s.description === slotToDelete.description
-            && s.dayOfWeek === slotToDelete.dayOfWeek
             && s.startTimeLocal === slotToDelete.startTimeLocal
             && s.endTimeLocal === slotToDelete.endTimeLocal
         )
 
-        console.log(`🗑️ Deleting ${allRepetitions.length} repetitions with same parameters`)
+        console.log(`🗑️ Deleting ${allRepetitions.length} repetitions (all days of week)`)
         console.log('Slots to delete:', allRepetitions.map(s => ({ id: s.id, dayOfWeek: s.dayOfWeek })))
 
         for (const slot of allRepetitions) {
@@ -552,44 +551,54 @@ export default function Home() {
           if (!response.ok) {
             console.error(`❌ Failed to delete slot ${slot.id}:`, response.status)
           } else {
-            console.log(`✅ Deleted slot ${slot.id}`)
+            console.log(`✅ Deleted slot ${slot.id} (${daysOfWeek[jsDayToDisplayDay(slot.dayOfWeek || 0)]})`)
           }
         }
 
         toast({
           title: 'Успешно',
-          description: `Удалено ${allRepetitions.length} повторений`,
+          description: `Удалено ${allRepetitions.length} повторений на все дни недели`,
         })
       } else {
-        // "Удалить этот день" - удаляем ВСЕ слоты на выбранную дату (одноразовые и циклические)
-        const selectedDateStr = selectedDate.toISOString().split('T')[0]
-        const slotsOnDate = slots.filter(slot => {
-          if (slot.type === 'ONE_TIME' && slot.startAt) {
-            return slot.startAt.toISOString().split('T')[0] === selectedDateStr
-          }
-          if (slot.type === 'CYCLIC_WEEKLY' && slot.dayOfWeek !== undefined) {
-            // JavaScript getDay(): 0=Sunday, 1=Monday, ..., 6=Saturday
-            return slot.dayOfWeek === selectedDate.getDay()
-          }
-          return false
-        })
+        // "Удалить этот день" - удаляем только слоты с теми же параметрами на этом дне недели
+        if (slotToDelete.type === 'CYCLIC_WEEKLY' && slotToDelete.description) {
+          const thisDayOfWeek = slotToDelete.dayOfWeek
+          const thisDaySlots = slots.filter(
+            s => s.type === 'CYCLIC_WEEKLY' 
+              && s.description === slotToDelete.description
+              && s.dayOfWeek === thisDayOfWeek
+              && s.startTimeLocal === slotToDelete.startTimeLocal
+              && s.endTimeLocal === slotToDelete.endTimeLocal
+          )
 
-        console.log(`🗑️ Deleting ${slotsOnDate.length} slots on selected date: ${selectedDateStr}`)
-        console.log('Slots to delete:', slotsOnDate.map(s => ({ id: s.id, type: s.type, dayOfWeek: s.dayOfWeek })))
+          console.log(`🗑️ Deleting ${thisDaySlots.length} slots for this day (${daysOfWeek[jsDayToDisplayDay(thisDayOfWeek)]})`)
 
-        for (const slot of slotsOnDate) {
-          const response = await fetch(`/api/slots/${slot.id}`, { method: 'DELETE' })
+          for (const slot of thisDaySlots) {
+            const response = await fetch(`/api/slots/${slot.id}`, { method: 'DELETE' })
+            if (!response.ok) {
+              console.error(`❌ Failed to delete slot ${slot.id}:`, response.status)
+            } else {
+              console.log(`✅ Deleted slot ${slot.id}`)
+            }
+          }
+
+          toast({
+            title: 'Успешно',
+            description: `Удалено ${thisDaySlots.length} записей на ${daysOfWeek[jsDayToDisplayDay(thisDayOfWeek)]}`,
+          })
+        } else {
+          // Одноразовый слот - просто удаляем по ID
+          console.log(`🗑️ Deleting one-time slot: ${slotToDelete.id}`)
+          const response = await fetch(`/api/slots/${slotToDelete.id}`, { method: 'DELETE' })
+          
           if (!response.ok) {
-            console.error(`❌ Failed to delete slot ${slot.id}:`, response.status)
-          } else {
-            console.log(`✅ Deleted slot ${slot.id}`)
+            console.error('❌ Failed to delete slot:', response.status)
+            throw new Error('Failed to delete slot')
           }
+          
+          console.log('✅ One-time slot deleted successfully')
+          toast({ title: 'Успешно', description: 'Время удалено' })
         }
-
-        toast({
-          title: 'Успешно',
-          description: `Удалено ${slotsOnDate.length} записей за ${daysOfWeek[jsDayToDisplayDay(selectedDate.getDay())]}`,
-        })
       }
 
       setDeleteDialogOpen(false)
@@ -1363,22 +1372,6 @@ export default function Home() {
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Выберите действие:</p>
                       <Button
-                        onClick={() => handleConfirmDelete(false)}
-                        disabled={deleteLoading}
-                        variant="outline"
-                        className="w-full justify-start"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                          <div className="text-left">
-                            <div className="font-medium">Удалить этот день</div>
-                            <div className="text-xs text-gray-500">
-                              Все записи за {daysOfWeek[selectedDate.getDay()]}
-                            </div>
-                          </div>
-                        </div>
-                      </Button>
-                      <Button
                         onClick={() => handleConfirmDelete(true)}
                         disabled={deleteLoading}
                         variant="outline"
@@ -1389,7 +1382,38 @@ export default function Home() {
                           <div className="text-left">
                             <div className="font-medium text-red-700">Удалить все повторения</div>
                             <div className="text-xs text-red-600">
-                              Удалить все повторений этой записи
+                              Удалить все {
+                                slots.filter(s =>
+                                  s.type === 'CYCLIC_WEEKLY' &&
+                                  s.description === slotToDelete.description &&
+                                  s.startTimeLocal === slotToDelete.startTimeLocal &&
+                                  s.endTimeLocal === slotToDelete.endTimeLocal
+                                ).length
+                              } повторений на все дни недели
+                            </div>
+                          </div>
+                        </div>
+                      </Button>
+                      <Button
+                        onClick={() => handleConfirmDelete(false)}
+                        disabled={deleteLoading}
+                        variant="outline"
+                        className="w-full justify-start"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                          <div className="text-left">
+                            <div className="font-medium">Удалить только этот день</div>
+                            <div className="text-xs text-gray-500">
+                              Только на {daysOfWeek[jsDayToDisplayDay(slotToDelete.dayOfWeek || 0)]} ({
+                                slots.filter(s =>
+                                  s.type === 'CYCLIC_WEEKLY' &&
+                                  s.description === slotToDelete.description &&
+                                  s.dayOfWeek === slotToDelete.dayOfWeek &&
+                                  s.startTimeLocal === slotToDelete.startTimeLocal &&
+                                  s.endTimeLocal === slotToDelete.endTimeLocal
+                                ).length
+                              } записей)
                             </div>
                           </div>
                         </div>
