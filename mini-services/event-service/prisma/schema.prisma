@@ -1,0 +1,205 @@
+// Prisma Schema for Event Service
+// Uses shared DATABASE_URL connection (same as main project)
+
+generator client {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Event {
+  id              String          @id @default(cuid())
+  userId          String
+  groupId         String
+  user            User            @relation(fields: ["userId"], references: ["id"])
+  group           Group           @relation(fields: ["groupId"], references: ["id"])
+
+  // Event status
+  status          String          @default("CONFIRMED") // CONFIRMED, CANCELLED, DRAFT, ARCHIVED
+
+  // Event type
+  type            String          // ONE_TIME, CYCLIC_WEEKLY, CYCLIC_CUSTOM
+  description     String?
+
+  // All-day events (birthdays, holidays, vacations)
+  isAllDay        Boolean         @default(false)
+
+  // For ONE_TIME events (stored in UTC)
+  startAt         DateTime?
+  endAt           DateTime?
+
+  // For CYCLIC_WEEKLY events (time in UTC, dayOfWeek in local timezone)
+  dayOfWeek       Int?            // 0-6 (Sunday-Saturday)
+  startTime       String?         // HH:MM format (UTC)
+  endTime         String?         // HH:MM format (UTC)
+
+  // Recurrence rules
+  recurrenceRule  String?         // DAILY, WEEKLY, BIWEEKLY, MONTHLY, YEARLY, CUSTOM
+  recurrenceDays  String?         // JSON array of days
+  recurrenceUntil DateTime?       // End date for recurrence
+
+  // Conflict resolution and sync
+  version         Int             @default(0)
+  lastModifiedBy  String?
+  lastModifiedAt  DateTime        @default(now())
+  isGenerated    Boolean         @default(false)
+
+  // Event category
+  category        String?
+
+  // Metadata
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  exceptions      EventException[]
+  reminders       Reminder[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([startAt])
+  @@index([status])
+  @@index([type])
+}
+
+// Event exceptions for recurring events
+model EventException {
+  id            String   @id @default(cuid())
+  eventId       String
+  event         Event   @relation(fields: ["eventId"], references: ["id"])
+
+  // Original planned date/time
+  originalDate  DateTime  @not null
+  originalStart DateTime?
+  originalEnd   DateTime?
+
+  // New date/time (NULL if cancelled)
+  newDate       DateTime?
+  newStart      DateTime?
+  newEnd        DateTime?
+
+  isCancelled   Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+
+  @@index([eventId])
+  @@index([originalDate])
+}
+
+// Reminder notifications
+model Reminder {
+  id           String   @id @default(cuid())
+  eventId      String
+  userId       String
+  event        Event   @relation(fields: ["eventId"], references: ["id"])
+  user         User    @relation(fields: ["userId"], references: ["id"])
+
+  minutesBefore Int     @default(30) // 15, 30, 60, 1440 (1 day)
+  isSent       Boolean @default(false)
+  sentAt       DateTime?
+
+  createdAt    DateTime @default(now())
+
+  @@index([eventId])
+  @@index([userId])
+  @@index([isSent])
+}
+
+model User {
+  id           String        @id @default(cuid())
+  telegramId   BigInt        @unique
+  username     String?
+  firstName    String
+  lastName     String?
+  isBot        Boolean       @default(false)
+  timezone     String        @default("UTC")
+  languageCode String?       @default("en")
+  photoUrl     String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  slots        Slot[]
+  events       Event[]
+  reminders    Reminder[]
+  memberships  GroupMember[]
+  groups       Group[]
+}
+
+model Group {
+  id              String        @id @default(cuid())
+  telegramChatId  BigInt        @unique
+  telegramTitle   String
+  telegramPhotoUrl String?
+  tier            String        @default("FREE") // FREE, GROUP_PRO, BUSINESS
+  memberCount     Int           @default(1)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  members         GroupMember[]
+  slots           Slot[]
+  events          Event[]
+  conflicts        Conflict[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  userId    String
+  groupId   String
+  joinedAt  DateTime @default(now())
+
+  user      User     @relation(fields: ["userId"], references: ["id"])
+  group     Group    @relation(fields: ["groupId"], references: ["id"])
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+model Slot {
+  id              String   @id @default(cuid())
+  userId          String
+  groupId         String
+  user            User     @relation(fields: ["userId"], references: [id])
+  group           Group    @relation(fields: ["groupId"], references: [id])
+
+  type            String   // ONE_TIME or CYCLIC_WEEKLY
+  description     String?
+
+  // For ONE_TIME slots
+  startAt         DateTime?
+  endAt           DateTime?
+
+  // For CYCLIC_WEEKLY slots
+  dayOfWeek       Int?     // 0-6 (Sunday-Saturday)
+  startTimeLocal  String?  // HH:MM format (local)
+  endTimeLocal    String?  // HH:MM format
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([startAt])
+}
+
+model Conflict {
+  id            String   @id @default(cuid())
+  groupId       String
+  group         Group    @relation(fields: ["groupId"], references: [id])
+
+  eventId1      String?  // Event that conflicts with eventId2
+  eventId2      String?  // Event that conflicts with eventId1
+  userId        String   // User who has the conflict
+  startTime     DateTime
+  endTime       DateTime
+  severity      String   @default("WARNING") // WARNING, ERROR
+  resolved      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([groupId])
+  @@index([userId])
+}
