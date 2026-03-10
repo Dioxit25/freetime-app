@@ -128,19 +128,27 @@ async function getGroupByChatId(chatId: string): Promise<Group | null> {
 }
 
 // Helper: Create or update group
-async function createOrUpdateGroup(chatId: string, title: string): Promise<Group | null> {
+async function createOrUpdateGroup(chatId: string, title: string, telegramUserId?: number): Promise<Group | null> {
   try {
+    console.log('📤 Creating/updating group:', { chatId, title, telegramUserId })
+    
     const response = await fetch(`${API_BASE}/api/groups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         telegramChatId: chatId,
         telegramTitle: title,
+        telegramUserId: telegramUserId,  // Add user to group members
       }),
     })
 
     if (response.ok) {
-      return await response.json()
+      const data = await response.json()
+      console.log('✅ Group response:', data)
+      return data.group
+    } else {
+      const errorText = await response.text()
+      console.error('❌ Group API error:', response.status, errorText)
     }
     return null
   } catch (error) {
@@ -218,12 +226,12 @@ bot.command('initgroup', async (ctx) => {
     return
   }
 
-  // Create or update group
-  const group = await createOrUpdateGroup(chatId, chatTitle)
+  // Create or update group with the user who initiated
+  const user = ctx.from
+  const group = await createOrUpdateGroup(chatId, chatTitle, user?.id)
 
   if (group) {
-    // Add user to group members
-    const user = ctx.from
+    // Also ensure user exists in database
     if (user) {
       await getOrCreateUser(user)
     }
@@ -250,15 +258,23 @@ bot.command('find', async (ctx) => {
   const args = ctx.message?.text?.split(' ').slice(1) || []
   const days = parseInt(args[0]) || 7
 
+  // Ensure user exists
+  const tgUser = ctx.from
+  if (tgUser) {
+    await getOrCreateUser(tgUser)
+  }
+
   if (isGroup) {
     // Group chat - find common time for all members
     const chatId = ctx.chat?.id.toString()
-    const group = await getGroupByChatId(chatId || '')
+    const chatTitle = ctx.chat?.title || 'Группа'
+    
+    // Auto-create/update group and add user
+    const group = await createOrUpdateGroup(chatId || '', chatTitle, tgUser?.id)
 
     if (!group) {
       await ctx.reply(
-        '⚠️ Группа не инициализирована.\n\n' +
-        'Используйте /initgroup для начала работы.'
+        '❌ Не удалось получить доступ к группе. Попробуйте позже.'
       )
       return
     }

@@ -187,12 +187,14 @@ export async function POST(request: NextRequest) {
     // If telegramUserId provided, add user to group
     let user = null
     if (telegramUserId) {
+      console.log('🔍 Looking for user with telegramId:', String(telegramUserId))
       try {
         user = await db.user.findUnique({
           where: { telegramId: String(telegramUserId) }
         })
 
         if (user) {
+          console.log('✅ Found user:', user.id, user.firstName)
           // Add user to group (if not already a member)
           await db.groupMember.upsert({
             where: {
@@ -208,10 +210,15 @@ export async function POST(request: NextRequest) {
             },
           })
           console.log('✅ User added to group:', user.id, '→', group.id)
+        } else {
+          console.log('⚠️ User not found with telegramId:', String(telegramUserId))
+          console.log('💡 User needs to be created first via /api/auth/telegram')
         }
       } catch (err: any) {
         console.error('Error adding user to group:', err)
       }
+    } else {
+      console.log('⚠️ No telegramUserId provided')
     }
 
     return NextResponse.json({
