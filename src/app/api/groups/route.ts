@@ -6,7 +6,40 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const telegramId = searchParams.get('telegramId')
+    const telegramChatId = searchParams.get('telegramChatId')
     const all = searchParams.get('all')
+
+    // If telegramChatId is provided, return that specific group
+    if (telegramChatId) {
+      let group = null
+      try {
+        group = await db.group.findFirst({
+          where: { telegramChatId: String(telegramChatId) }
+        })
+      } catch (e) {
+        // Fallback to BigInt for PostgreSQL
+        try {
+          group = await db.group.findFirst({
+            where: { telegramChatId: BigInt(telegramChatId) as any }
+          })
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!group) {
+        return NextResponse.json([])
+      }
+
+      return NextResponse.json([{
+        id: group.id,
+        telegramChatId: group.telegramChatId.toString(),
+        telegramTitle: group.telegramTitle,
+        telegramPhotoUrl: group.telegramPhotoUrl,
+        tier: group.tier,
+        memberCount: 1, // TODO: Get actual count
+      }])
+    }
 
     // If all=true, return all groups (for user to join)
     if (all === 'true') {

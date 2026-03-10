@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const {
       userId,
+      telegramId,  // Alternative: find user by telegram ID (for bot)
       type,
       description,
       startAt,
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
 
     console.log('📥 Slot creation request:', {
       userId,
+      telegramId,
       type,
       description,
       startAt,
@@ -71,19 +73,34 @@ export async function POST(request: NextRequest) {
       timezone,
     })
 
-    if (!userId || !type) {
-      console.log('❌ Validation failed: missing required fields', { userId, type })
+    // Determine userId - either provided directly or via telegramId
+    let effectiveUserId = userId
+
+    if (!effectiveUserId && telegramId) {
+      // Find user by telegram ID (for bot requests)
+      const userByTelegram = await db.user.findFirst({
+        where: { telegramId: telegramId.toString() },
+        select: { id: true }
+      })
+      if (userByTelegram) {
+        effectiveUserId = userByTelegram.id
+        console.log('✅ Found user by telegramId:', telegramId, '-> userId:', effectiveUserId)
+      }
+    }
+
+    if (!effectiveUserId || !type) {
+      console.log('❌ Validation failed: missing required fields', { userId, telegramId, effectiveUserId, type })
       return NextResponse.json(
-        { error: 'userId and type are required', received: { userId, type } },
+        { error: 'userId (or telegramId) and type are required', received: { userId, telegramId, type } },
         { status: 400 }
       )
     }
 
     // Handle demo user
-    if (userId === 'demo-user') {
+    if (effectiveUserId === 'demo-user') {
       return NextResponse.json({
         id: `demo-slot-${Date.now()}`,
-        userId,
+        userId: effectiveUserId,
         type,
         description,
         startAt: startAt ? new Date(startAt) : null,
@@ -109,14 +126,14 @@ export async function POST(request: NextRequest) {
 
     // Verify user exists and get their timezone
     const user = await db.user.findUnique({
-      where: { id: userId },
+      where: { id: effectiveUserId },
       select: { id: true, firstName: true, timezone: true }
     })
 
     if (!user) {
-      console.log('❌ User not found in database:', userId)
+      console.log('❌ User not found in database:', effectiveUserId)
       return NextResponse.json(
-        { error: 'User not found', details: `User with id ${userId} does not exist` },
+        { error: 'User not found', details: `User with id ${effectiveUserId} does not exist` },
         { status: 404 }
       )
     }
@@ -131,7 +148,7 @@ export async function POST(request: NextRequest) {
     // Create slot using Prisma Client
     const slot = await db.slot.create({
       data: {
-        userId,
+        userId: effectiveUserId,
         type,
         description: description || null,
         startAt: startAt ? new Date(startAt) : null,
