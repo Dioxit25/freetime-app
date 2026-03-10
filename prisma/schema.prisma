@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,19 +11,74 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String        @id @default(cuid())
+  telegramId   String        @unique
+  username     String?
+  firstName    String
+  lastName     String?
+  isBot        Boolean       @default(false)
+  timezone     String        @default("UTC")
+  languageCode String?       @default("en")
+  photoUrl     String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Conflict resolution settings
+  conflictMode String        @default("SOFT")
+
+  slots        Slot[]
+  memberships  GroupMember[]
 }
 
-model Post {
+model Group {
+  id               String        @id @default(cuid())
+  telegramChatId   String        @unique
+  telegramTitle    String
+  telegramPhotoUrl String?
+  tier             String        @default("FREE")
+  memberCount      Int           @default(1)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  members          GroupMember[]
+}
+
+model GroupMember {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId    String
+  groupId   String
+  joinedAt  DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+model Slot {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type            String   // "ONE_TIME" или "CYCLIC_WEEKLY"
+  description     String?
+  
+  // Для ONE_TIME - время в UTC
+  startAt         DateTime?
+  endAt           DateTime?
+  
+  // Для CYCLIC_WEEKLY - локальное время и timezone
+  dayOfWeek       Int?        // 0=Воскресенье, 1=Понедельник, ..., 6=Суббота (JavaScript формат)
+  startTimeLocal  String?     // "HH:MM" в локальном времени пользователя
+  endTimeLocal    String?     // "HH:MM" в локальном времени пользователя
+  timezone        String?     // "Europe/Moscow", "America/New_York" и т.д.
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([startAt])
+  @@index([timezone])
 }
