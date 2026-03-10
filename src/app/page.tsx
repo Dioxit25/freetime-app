@@ -140,6 +140,7 @@ export default function Home() {
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('18:00')
   const [selectedDays, setSelectedDays] = useState<number[]>([])
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[] | null>(null) // null = все выбраны
 
   // Day slot sheet states
   const [isDaySheetOpen, setIsDaySheetOpen] = useState(false)
@@ -528,6 +529,7 @@ export default function Home() {
           groupId: selectedGroup.id,
           daysToLookAhead: 7,
           minDuration: minDuration,
+          userIds: selectedParticipantIds, // null = все, или массив ID
         }),
       })
 
@@ -783,24 +785,62 @@ export default function Home() {
 
     return (
       <div className="space-y-4">
-        {/* Participants */}
+        {/* Participants - clickable for selection */}
         {searchResults.participants && searchResults.participants.length > 0 && (
           <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Users className="w-4 h-4 text-blue-600" />
-              <span className="font-medium text-blue-900">Участники поиска:</span>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-blue-600" />
+                <span className="font-medium text-blue-900">Участники поиска:</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedParticipantIds(null)}
+                className="text-xs text-blue-600 h-7"
+              >
+                Сбросить
+              </Button>
             </div>
             <div className="flex flex-wrap gap-2">
-              {searchResults.participants.map((p) => (
-                <div key={p.id} className="px-3 py-1.5 bg-white rounded-lg border border-blue-200 text-sm">
-                  <span className="font-medium text-gray-900">
-                    {p.firstName}{p.lastName ? ` ${p.lastName}` : ''}
-                  </span>
-                  {p.timezone && (
-                    <span className="text-xs text-gray-400 ml-1">({p.timezone})</span>
-                  )}
-                </div>
-              ))}
+              {searchResults.participants.map((p) => {
+                const isSelected = selectedParticipantIds === null || selectedParticipantIds.includes(p.id)
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      if (selectedParticipantIds === null) {
+                        // Изначально выбраны все - исключаем текущего
+                        const others = searchResults.participants.filter(x => x.id !== p.id).map(x => x.id)
+                        setSelectedParticipantIds(others.length === 0 ? null : others)
+                      } else {
+                        // Некоторые выбраны
+                        if (selectedParticipantIds.includes(p.id)) {
+                          // Убираем из выбора
+                          const newSelection = selectedParticipantIds.filter(id => id !== p.id)
+                          setSelectedParticipantIds(newSelection.length === 0 ? null : newSelection)
+                        } else {
+                          // Добавляем в выбор
+                          setSelectedParticipantIds([...selectedParticipantIds, p.id])
+                        }
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-sm transition-all ${
+                      isSelected
+                        ? 'bg-white border-blue-400 shadow-sm'
+                        : 'bg-gray-100 border-gray-200 opacity-50'
+                    }`}
+                  >
+                    <span className={`font-medium ${isSelected ? 'text-gray-900' : 'text-gray-500'}`}>
+                      {p.firstName}{p.lastName ? ` ${p.lastName}` : ''}
+                    </span>
+                    {p.timezone && (
+                      <span className="text-xs text-gray-400 ml-1">({p.timezone})</span>
+                    )}
+                    {!isSelected && <span className="text-xs text-red-400 ml-1">✕</span>}
+                  </button>
+                )
+              })}
             </div>
             {searchResults.timezones && searchResults.timezones.length > 0 && (
               <p className="text-xs text-blue-600 mt-2">
@@ -810,9 +850,20 @@ export default function Home() {
           </div>
         )}
 
-        {/* Results count */}
-        <div className="text-center">
-          Найдено <span className="font-semibold text-gray-900">{searchResults.count}</span> свободных слотов
+        {/* Results count with refresh button */}
+        <div className="text-center flex items-center justify-center gap-2">
+          <span>
+            Найдено <span className="font-semibold text-gray-900">{searchResults.count}</span> свободных слотов
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSearch}
+            disabled={searching}
+            className="h-7 w-7 p-0"
+          >
+            <RefreshCw className={`w-4 h-4 ${searching ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
 
         {/* Results list */}
@@ -888,7 +939,11 @@ export default function Home() {
                 value={selectedGroup?.id}
                 onValueChange={(v) => {
                   const group = groups.find(g => g.id === v)
-                  if (group) setSelectedGroup(group)
+                  if (group) {
+                    setSelectedGroup(group)
+                    setSelectedParticipantIds(null) // Сброс выбора участников при смене группы
+                    setSearchResults(null) // Сброс результатов поиска
+                  }
                 }}
               >
                 <SelectTrigger className="w-[180px]">
