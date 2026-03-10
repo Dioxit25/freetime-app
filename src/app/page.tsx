@@ -107,7 +107,8 @@ const slotCategories: Record<SlotCategory, {
   },
 }
 
-const daysOfWeek = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+const daysOfWeek = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']  // JavaScript формат (0=Вс)
+const daysOfWeekCalendar = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']  // Европейский формат для заголовков календаря
 const daysOfWeekFull = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
 
 export default function Home() {
@@ -568,15 +569,18 @@ export default function Home() {
     const month = selectedDate.getMonth()
     const firstDay = new Date(year, month, 1)
     const lastDay = new Date(year, month + 1, 0)
-    const startPadding = firstDay.getDay()
+    // Конвертируем JS день недели (0=Вс) в европейский (0=Пн)
+    // 0 (Вс) -> 6, 1 (Пн) -> 0, 2 (Вт) -> 1, и т.д.
+    const jsDay = firstDay.getDay()
+    const startPadding = jsDay === 0 ? 6 : jsDay - 1
     const daysInMonth = lastDay.getDate()
 
     const weeks: Date[][] = []
     let currentWeek: Date[] = []
 
-    // Add padding for first week
-    for (let i = 0; i < startPadding; i++) {
-      const padDate = new Date(year, month, -startPadding + i + 1)
+    // Add padding for first week (дни предыдущего месяца)
+    for (let i = startPadding - 1; i >= 0; i--) {
+      const padDate = new Date(year, month, -i)
       currentWeek.push(padDate)
     }
 
@@ -604,7 +608,7 @@ export default function Home() {
       <div className="space-y-1">
         {/* Weekday headers */}
         <div className="grid grid-cols-7 gap-1 text-xs font-semibold text-gray-500">
-          {daysOfWeek.map((day, i) => (
+          {daysOfWeekCalendar.map((day, i) => (
             <div key={i} className="text-center py-2">{day}</div>
           ))}
         </div>
