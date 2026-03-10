@@ -375,7 +375,7 @@ toZonedTime(utcDate, timezone)
 **Расположение:** `mini-services/bot-service/`
 **Порт:** 3001
 **Bot Token:** `8588760442:AAEIHS1Pfomhp6VGqtbIFCS3WwBY_dVZ4i0`
-**Username:** @TimeAgreeBot
+**Username:** @TimeAgreeBot (имя: FreeTime)
 
 ### Команды бота
 
