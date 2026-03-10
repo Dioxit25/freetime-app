@@ -37,6 +37,51 @@ interface FindTimeResponse {
   timezones?: string[]
 }
 
+// Helper function to make Telegram API calls
+async function telegramApi(method: string, params: Record<string, any> = {}): Promise<any> {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+  const data = await response.json()
+  if (!data.ok) {
+    throw new Error(`Telegram API error: ${data.description}`)
+  }
+  return data.result
+}
+
+// Clear webhook and pending updates before starting polling
+async function clearWebhookAndUpdates(): Promise<void> {
+  console.log('🔄 Clearing webhook and pending updates...')
+  
+  try {
+    // Delete webhook (if any)
+    await telegramApi('deleteWebhook', { drop_pending_updates: true })
+    console.log('✅ Webhook deleted')
+    
+    // Get and confirm any pending updates to clear them
+    let updates
+    let attempts = 0
+    do {
+      updates = await telegramApi('getUpdates', { timeout: 0, limit: 100 })
+      if (updates.length > 0) {
+        console.log(`📥 Clearing ${updates.length} pending updates...`)
+        // Confirm these updates by getting them with the next offset
+        const lastUpdateId = updates[updates.length - 1].update_id
+        await telegramApi('getUpdates', { timeout: 0, limit: 100, offset: lastUpdateId + 1 })
+      }
+      attempts++
+    } while (updates.length > 0 && attempts < 5)
+    
+    console.log('✅ Pending updates cleared')
+  } catch (error) {
+    console.error('⚠️ Warning during cleanup:', error)
+    // Continue anyway - this shouldn't prevent bot from starting
+  }
+}
+
 // Initialize bot
 const bot = new Telegraf(BOT_TOKEN)
 
@@ -415,9 +460,15 @@ bot.catch((err, ctx) => {
 const PORT = 3001
 console.log(`🤖 Starting TimeAgreeBot on port ${PORT}...`)
 
-// Launch bot with better error handling
-bot.launch()
-  .then(() => {
+// Main startup function
+async function startBot() {
+  try {
+    // Clear any existing webhook and pending updates to avoid 409 conflict
+    await clearWebhookAndUpdates()
+    
+    // Launch bot with polling
+    await bot.launch()
+    
     console.log('✅ Bot started successfully with polling')
     console.log('📌 Commands available:')
     console.log('   /start - Start the bot')
@@ -425,16 +476,22 @@ bot.launch()
     console.log('   /initgroup - Initialize group')
     console.log('   /find [days] - Find free time')
     console.log('   /add [date] [time] - Add busy slot')
-  })
-  .catch((err) => {
-    // Ignore redaction errors - they don't affect bot operation
-    if (err.message && err.message.includes('redact')) {
-      console.log('✅ Bot started (ignoring redaction warning)')
-      return
-    }
+  } catch (err: any) {
     console.error('❌ Failed to start bot:', err)
-    process.exit(1)
-  })
+    
+    // If it's a 409 conflict, wait and retry
+    if (err.message && err.message.includes('409')) {
+      console.log('⚠️ Conflict detected, retrying in 5 seconds...')
+      await new Promise(resolve => setTimeout(resolve, 5000))
+      await startBot()
+    } else {
+      process.exit(1)
+    }
+  }
+}
+
+// Start the bot
+startBot()
 
 // Graceful shutdown
 process.once('SIGINT', () => {
