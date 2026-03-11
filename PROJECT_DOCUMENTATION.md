@@ -1,9 +1,8 @@
 # TimeAgree - Полное техническое описание проекта
 
-> **Последнее обновление:** 2026-03-10
-> **Версия документа:** 1.8
-> **Коммит:** 453eb2f - fix: bot /find command - add user to GroupMember
-> **Статус:** ✅ Все задачи выполнены, бот работает стабильно
+> **Последнее обновление:** 2026-03-11
+> **Версия документа:** 1.2
+> **Коммит:** 1905891 (feat: add webhook route for Telegram bot commands)
 
 ---
 
@@ -45,7 +44,7 @@
           ▼                ▼                     ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Telegram Bot API                             │
-│                    @TimeAgreeBot (port 3001)                     │
+│              @TimeAgreeBot (Webhook mode on Vercel)              │
 │  • /start, /help — справка                                      │
 │  • /initgroup — создание группы                                 │
 │  • /find [дней] — поиск времени                                 │
@@ -59,6 +58,7 @@
 │                                                                  │
 │  Frontend: src/app/page.tsx + components/                       │
 │  API Routes: src/app/api/                                        │
+│  Webhook Handler: src/app/api/webhook/route.ts                  │
 │  Libraries: src/lib/ (db.ts, time-finder.ts, timezone.ts)       │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
@@ -67,7 +67,7 @@
 │                     База данных                                  │
 │                                                                  │
 │  Локально (dev): SQLite (db/custom.db), telegramId: String      │
-│  Продакшн: Supabase PostgreSQL, telegramId: BigInt              │
+│  Продакшн: Supabase PostgreSQL, telegramId: String/BigInt       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -86,13 +86,11 @@
 | Lucide React | 0.525.0 | Иконки |
 | Framer Motion | 12.23.2 | Анимации |
 | date-fns | 4.1.0 | Работа с датами |
-| date-fns-tz | 3.2.0 | **Работа с часовыми поясами** |
 
 ### Backend
 | Технология | Версия | Назначение |
 |------------|--------|------------|
 | Prisma | 6.11.1 | ORM для базы данных |
-| Telegraf | (telegraf) | Telegram Bot Framework |
 | Zod | 4.0.2 | Валидация данных |
 | React Hook Form | 7.60.0 | Формы |
 
@@ -100,7 +98,7 @@
 | Окружение | Технология | Особенности |
 |-----------|------------|-------------|
 | Development | SQLite | Файл `db/custom.db`, `telegramId: String` |
-| Production | Supabase PostgreSQL | Connection pooling, `telegramId: BigInt` |
+| Production | Supabase PostgreSQL | Connection pooling, `telegramId: String/BigInt` |
 
 ### Deployment
 - **Vercel:** Next.js приложение (freetime-app-jy3k.vercel.app)
@@ -111,6 +109,8 @@
 
 ## Модели базы данных (Prisma Schema)
 
+### Текущая схема
+
 ```prisma
 model User {
   id           String        @id @default(cuid())
@@ -119,7 +119,7 @@ model User {
   firstName    String
   lastName     String?
   isBot        Boolean       @default(false)
-  timezone     String        @default("UTC")  // Часовой пояс пользователя
+  timezone     String        @default("UTC")
   languageCode String?       @default("en")
   photoUrl     String?
   createdAt    DateTime      @default(now())
@@ -155,111 +155,17 @@ model Slot {
   id              String   @id @default(cuid())
   userId          String
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
   type            String   // "ONE_TIME" или "CYCLIC_WEEKLY"
   description     String?
-  
-  // Для ONE_TIME - время в UTC
-  startAt         DateTime?
-  endAt           DateTime?
-  
-  // Для CYCLIC_WEEKLY - локальное время и timezone
-  dayOfWeek       Int?        // 0=Вс, 1=Пн, ..., 6=Сб (JavaScript формат)
-  startTimeLocal  String?     // "HH:MM" в локальном времени пользователя
-  endTimeLocal    String?     // "HH:MM" в локальном времени пользователя
-  timezone        String?     // "Europe/Moscow", "America/New_York" и т.д.
-  
+  startAt         DateTime?   // Для ONE_TIME
+  endAt           DateTime?   // Для ONE_TIME
+  dayOfWeek       Int?        // Для CYCLIC_WEEKLY (0=Вс, 1=Пн, ..., 6=Сб)
+  startTimeLocal  String?     // "HH:MM"
+  endTimeLocal    String?     // "HH:MM"
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-
-  @@index([userId])
-  @@index([startAt])
-  @@index([timezone])
 }
 ```
-
----
-
-## Работа с часовыми поясами (Timezone Handling)
-
-### Обновлено в версии 1.1 (2026-03-10)
-
-#### Проблема
-Ранее timezone не учитывался при поиске слотов CYCLIC_WEEKLY, что приводило к смещению времени для пользователей не в UTC.
-
-#### Решение
-
-**1. Добавлено поле `timezone` в модель Slot:**
-- Хранит часовой пояс пользователя на момент создания слота
-- Для CYCLIC_WEEKLY слотов — обязателен
-- Fallback на timezone пользователя или UTC
-
-**2. Обновлён алгоритм поиска (TimeFinderService):**
-```typescript
-// Используется date-fns-tz для конвертации
-import { fromZonedTime, toZonedTime } from 'date-fns-tz'
-
-// При создании занятых интервалов для CYCLIC_WEEKLY:
-const currInTz = toZonedTime(curr, slotTimezone)
-const dayOfWeekInTz = currInTz.getDay()
-
-// Создаём локальное время и конвертируем в UTC
-const startUtc = fromZonedTime(localDateStart, slotTimezone)
-```
-
-**3. Фронтенд передаёт timezone:**
-```typescript
-// При сохранении слота
-const userTimezone = user.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-
-await fetch('/api/slots', {
-  method: 'POST',
-  body: JSON.stringify({
-    // ...
-    startTimeLocal: '09:00',
-    endTimeLocal: '18:00',
-    timezone: userTimezone,  // "Europe/Moscow"
-  })
-})
-```
-
-#### Поток данных
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  Добавление CYCLIC_WEEKLY слота                  │
-├─────────────────────────────────────────────────────────────────┤
-│  Пользователь (Москва, UTC+3)                                    │
-│  Вводит: 09:00 - 18:00                                           │
-│           ↓                                                      │
-│  Frontend: timezone = "Europe/Moscow"                            │
-│  Отправляет: { startTimeLocal: "09:00", timezone: "Europe/Moscow" }
-│           ↓                                                      │
-│  Server: Сохраняет как есть (локальное время + timezone)        │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                     Поиск общего времени                         │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Загружаем слоты с timezone                                   │
-│  2. Для каждого CYCLIC_WEEKLY:                                   │
-│     - Получаем день в timezone пользователя                      │
-│     - Создаём локальное время (09:00 Moscow)                     │
-│     - Конвертируем в UTC (06:00 UTC)                             │
-│  3. Сравниваем все интервалы в UTC                               │
-│  4. Возвращаем результаты в UTC                                  │
-│           ↓                                                      │
-│  Frontend: toLocaleString() показывает в локальном времени       │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Пример конвертации
-
-| Пользователь | Локальное время | UTC |
-|--------------|-----------------|-----|
-| Москва (UTC+3) | 09:00 | 06:00 |
-| Нью-Йорк (UTC-5) | 09:00 | 14:00 |
-| Токио (UTC+9) | 09:00 | 00:00 |
 
 ---
 
@@ -275,6 +181,10 @@ await fetch('/api/slots', {
 {
   "id": 123456789,
   "firstName": "Иван",
+  "lastName": "Иванов",
+  "username": "ivan_ivanov",
+  "photoUrl": "https://...",
+  "languageCode": "ru",
   "timezone": "Europe/Moscow",
   "chatId": -1001234567890
 }
@@ -283,11 +193,8 @@ await fetch('/api/slots', {
 **Response:**
 ```json
 {
-  "user": { 
-    "id": "...", 
-    "timezone": "Europe/Moscow" 
-  },
-  "groups": [...]
+  "user": { "id": "...", "telegramId": "...", "firstName": "...", "timezone": "..." },
+  "groups": [{ "id": "...", "telegramTitle": "...", "memberCount": 5 }]
 }
 ```
 
@@ -295,166 +202,155 @@ await fetch('/api/slots', {
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
 | GET | `/api/slots?userId=X` | Получить слоты пользователя |
-| POST | `/api/slots` | Создать слот (с timezone) |
+| POST | `/api/slots` | Создать слот |
 | DELETE | `/api/slots/[id]` | Удалить слот |
 
-**Создание CYCLIC_WEEKLY с timezone:**
-```json
-{
-  "userId": "...",
-  "type": "CYCLIC_WEEKLY",
-  "dayOfWeek": 1,
-  "startTimeLocal": "09:00",
-  "endTimeLocal": "18:00",
-  "timezone": "Europe/Moscow"
-}
-```
+**Типы слотов:**
+- `ONE_TIME` — разовое событие (startAt, endAt)
+- `CYCLIC_WEEKLY` — еженедельное (dayOfWeek, startTimeLocal, endTimeLocal)
 
 ### Группы
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
 | GET | `/api/groups?telegramId=X` | Группы пользователя |
+| GET | `/api/groups?all=true` | Все группы |
 | POST | `/api/groups` | Создать/обновить группу |
+| GET | `/api/groups/[id]` | Информация о группе |
+| POST | `/api/groups/join` | Присоединиться к группе |
 
 ### Поиск времени
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
 | POST | `/api/find-time` | Найти общее свободное время |
 
-**Response с информацией о timezone:**
+**Request:**
 ```json
 {
-  "slots": [...],
-  "participants": [
-    { "firstName": "Иван", "timezone": "Europe/Moscow" }
-  ],
-  "timezones": ["Europe/Moscow", "America/New_York"]
+  "groupId": "...",
+  "userIds": ["..."],      // Опционально
+  "daysToLookAhead": 7,
+  "minDuration": 60
 }
 ```
 
----
-
-## Алгоритмы
-
-### Поиск общего свободного времени (TimeFinderService)
-
-**Файл:** `src/lib/time-finder.ts`
-
-```
-1. Определение временного окна (windowStart → windowEnd) в UTC
-2. Для каждого пользователя:
-   a. getBusyIntervals() - сбор занятых интервалов
-      - ONE_TIME: [startAt, endAt] уже в UTC
-      - CYCLIC_WEEKLY:
-        * Для каждого дня в окне
-        * Получить день недели в timezone слота
-        * Создать локальное время
-        * Конвертировать в UTC с fromZonedTime()
-   b. mergeIntervals() - объединение пересекающихся
-   c. invertIntervals() - получение свободного времени
-3. Пересечение свободного времени всех пользователей (в UTC)
-4. Фильтрация по минимальной длительности
-5. Сортировка по времени начала
-```
-
-**Ключевые функции:**
-```typescript
-// Конвертация из локального времени в UTC
-fromZonedTime(localDate, timezone)
-
-// Конвертация из UTC в локальное время
-toZonedTime(utcDate, timezone)
-```
+### Webhook
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| POST | `/api/webhook` | Telegram Bot Webhook |
+| GET | `/api/webhook` | Проверка статуса webhook |
 
 ---
 
-## Telegram Bot
+## Telegram Bot (@TimeAgreeBot)
 
-### Мини-сервис бота
+### Режим работы: Webhook (Production)
+**URL:** `https://freetime-app-jy3k.vercel.app/api/webhook`
 
-**Расположение:** `mini-services/bot-service/`
-**Порт:** 3001
-**Bot Token:** `8588760442:AAEIHS1Pfomhp6VGqtbIFCS3WwBY_dVZ4i0`
-**Username:** @TimeAgreeBot (имя: FreeTime)
-
-### Команды бота
-
-| Команда | Описание | Пример |
-|---------|----------|--------|
-| `/start` | Начать работу, приветствие | `/start` |
-| `/help` | Справка по командам | `/help` |
-| `/initgroup` | Инициализировать группу (только в групповом чате) | `/initgroup` |
-| `/find [дней]` | Найти общее свободное время | `/find 14` |
-| `/add [дата] [время] [описание]` | Добавить занятое время | `/add сегодня 10:00-18:00 работа` |
-
-### Форматы даты и времени для /add
-
-**Дата:**
-- `сегодня` / `today` — текущий день
-- `завтра` / `tomorrow` — следующий день
-- `DD.MM` — день.месяц (например, `15.03`)
-- `DD.MM.YY` — день.месяц.год (например, `15.03.26`)
-
-**Время:**
-- Формат: `ЧЧ:ММ-ЧЧ:ММ`
-- Пример: `09:00-18:00`, `10:30-14:00`
-
-### Запуск бота
-
+**Настройка webhook:**
 ```bash
-cd mini-services/bot-service
-BOT_TOKEN='8588760442:AAEIHS1Pfomhp6VGqtbIFCS3WwBY_dVZ4i0' bun run dev
+curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://freetime-app-jy3k.vercel.app/api/webhook"
 ```
 
-### Архитектура бота
+**Команды:**
+| Команда | Контекст | Описание |
+|---------|----------|----------|
+| `/start` | Любой чат | Приветствие |
+| `/help` | Любой | Справка |
+| `/initgroup` | Группа | Инициализация группы |
+| `/find [дней]` | Группа | Поиск общего времени (1-30 дней) |
+| `/add YYYY-MM-DD HH:MM HH:MM описание` | Группа | Быстрое добавление слота |
+
+**События:**
+- `my_chat_member` — бот добавлен/удалён из группы (автоматически создаёт группу в БД)
+
+**Handler:** `src/app/api/webhook/route.ts`
+
+---
+
+## UI/UX
+
+### Категории слотов
+| Категория | Emoji | Цвет |
+|-----------|-------|------|
+| Работа | 🏢 | Синий |
+| Учёба | 📚 | Зелёный |
+| Спорт | 🏃 | Оранжевый |
+| Отдых | 🎮 | Фиолетовый |
+| Другое | — | Серый |
+
+### Визуализация занятости (Gantt bars)
+- 0-30%: зелёный (мало занят)
+- 30-60%: жёлтый (средне)
+- 60-80%: оранжевый (много)
+- 80-100%: красный (очень занят)
+
+### Демо-режим
+- Активируется при `userId === 'demo-user'`
+- Блокирует все операции записи
+- Показывает предупреждение в toast
+
+---
+
+## Переменные окружения
+
+### Локально
+```env
+DATABASE_URL="file:./db/custom.db"
+BOT_TOKEN="..."
+WEB_APP_URL="http://localhost:3000"
+```
+
+### Vercel (Production)
+```env
+# Supabase PostgreSQL
+DATABASE_URL="postgres://..."
+DIRECT_URL="postgres://..."
+POSTGRES_PRISMA_URL="postgres://..."
+
+# Supabase API
+SUPABASE_URL="https://xxx.supabase.co"
+SUPABASE_ANON_KEY="..."
+SUPABASE_SERVICE_ROLE_KEY="..."
+
+# Telegram Bot
+BOT_TOKEN="..."
+BOT_USERNAME="TimeAgreeBot"
+WEB_APP_URL="https://freetime-app-jy3k.vercel.app"
+```
+
+---
+
+## Структура файлов
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Telegram Bot Service                         │
-│                    (mini-services/bot-service/)                  │
-│                                                                  │
-│  index.ts - основной файл бота                                  │
-│    ├── Команды (/start, /help, /initgroup, /find, /add)        │
-│  ├── Обработка new_chat_members                                 │
-│  └── Error handling                                             │
-│                                                                  │
-│  Зависимости:                                                    │
-│    • telegraf ^4.16.3 - Telegram Bot Framework                  │
-│    • node --experimental-strip-types для TypeScript             │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │ HTTP requests
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Next.js API Routes                            │
-│                                                                  │
-│  POST /api/auth/telegram - создание/получение пользователя      │
-│  POST /api/groups - создание/обновление группы                  │
-│  GET  /api/groups?telegramChatId=X - получение группы           │
-│  POST /api/slots - создание слота (поддержка telegramId)        │
-│  POST /api/find-time - поиск общего времени                     │
-└─────────────────────────────────────────────────────────────────┘
-```
+src/
+├── app/
+│   ├── page.tsx              # Главный UI (Mini App)
+│   ├── layout.tsx            # Root layout + Telegram WebApp SDK
+│   ├── globals.css           # Глобальные стили
+│   └── api/
+│       ├── auth/telegram/route.ts    # Авторизация
+│       ├── slots/route.ts            # CRUD слотов
+│       ├── slots/[id]/route.ts       # Удаление слота
+│       ├── groups/route.ts           # CRUD групп
+│       ├── find-time/route.ts        # Поиск времени
+│       ├── webhook/route.ts          # Telegram Bot Webhook handler
+│       └── ...
+├── components/
+│   ├── ui/                   # shadcn/ui компоненты
+│   ├── DaySlotSheet.tsx      # Bottom sheet для дня
+│   └── slots/
+├── lib/
+│   ├── db.ts                 # Prisma client
+│   ├── time-finder.ts        # Алгоритм поиска времени
+│   ├── timezone.ts           # Утилиты часовых поясов
+│   └── utils.ts              # Общие утилиты
+└── hooks/
+    ├── use-toast.ts          # Toast уведомления
+    └── use-mobile.ts         # Детект мобильных
 
-### Изменения в API для бота
-
-**1. POST /api/slots — поддержка telegramId:**
-```json
-{
-  "telegramId": "267383879",  // Альтернатива userId для бота
-  "type": "ONE_TIME",
-  "startAt": "2026-03-10T10:00:00Z",
-  "endAt": "2026-03-10T18:00:00Z"
-}
-```
-
-**2. GET /api/groups?telegramChatId=X — получение группы по chat ID:**
-```json
-[{
-  "id": "cmml493cq0000ok5nx30ji3uc",
-  "telegramChatId": "-1003829642821",
-  "telegramTitle": "Название группы",
-  "tier": "FREE"
-}]
+prisma/
+└── schema.prisma             # Схема базы данных
 ```
 
 ---
@@ -463,83 +359,26 @@ BOT_TOKEN='8588760442:AAEIHS1Pfomhp6VGqtbIFCS3WwBY_dVZ4i0' bun run dev
 
 ### 1. ~~"User not identified. Please open from Telegram."~~
 **Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Решение:** Откат к коммиту с демо-режимом
+**Причина:** В старом коде не было демо-режима
+**Решение:** Откат к коммиту `03b868a` с демо-режимом
 
-### 2. ~~CYCLIC_WEEKLY слоты смещены по timezone~~
-**Статус:** ИСПРАВЛЕНО И ПРОТЕСТИРОВАНО (2026-03-10)
-**Причина:** Алгоритм использовал серверное время вместо timezone пользователя
-**Решение:** 
-- Добавлено поле `timezone` в модель Slot
-- Обновлён TimeFinderService для конвертации времени с использованием `date-fns-tz`
-- Переключён провайдер Prisma с SQLite на PostgreSQL
-- Деплой на Vercel успешно выполнен
-**Проверено:** https://freetime-app-jy3k.vercel.app
+### 2. Vercel не деплоит после git push
+**Причина:** Vercel подключен к ветке `master`, а не `main`
+**Решение:** Push в обе ветки: `git push origin HEAD:main HEAD:master`
 
-### 3. ~~Vercel не деплоит после git push~~
-**Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Решение:** Production branch изменён на `main` в настройках Vercel
-
-### 4. BigInt serialization для PostgreSQL
+### 3. BigInt serialization для PostgreSQL
 **Статус:** РЕШЕНО
 **Решение:** Fallback в API routes (String → BigInt)
 
-### 5. ~~Календарь начинается с воскресенья вместо понедельника~~
+### 4. ~~Бот не реагирует на команды в группах~~
+**Статус:** ИСПРАВЛЕНО (2026-03-11)
+**Причина:** Webhook route отсутствовал в репозитории
+**Решение:** Создан `/api/webhook/route.ts` с обработкой всех команд бота
+
+### 5. ~~Ошибка 409 Conflict при polling~~
 **Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Решение:** Добавлен отдельный массив `daysOfWeekCalendar` для заголовков календаря в европейском формате (Пн-Вс), изменена логика `startPadding` для недель начинающихся с понедельника
-
-### 6. ~~Бот не отвечает на команды в группах~~
-**Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Описание:** Telegram бот не отвечал на команды (/start, /find, /add, /initgroup) в групповых чатах
-**Решение:** Реализован мини-сервис бота:
-- Создан `mini-services/bot-service/` на порту 3001
-- Установлен telegraf и настроен polling режим
-- Команды: /start, /help, /initgroup, /find [дней], /add [дата] [время]
-- API обновлён для поддержки telegramId при создании слотов
-- Запуск: `BOT_TOKEN=xxx bun run dev` в mini-services/bot-service/
-
-### 7. ~~Нет кнопки обновления слотов при переключении группы~~
-**Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Решение:** Добавлена кнопка RefreshCw рядом с результатами поиска, сброс participant selection при смене группы
-
-### 8. ~~Нет выбора участников при поиске слота~~
-**Статус:** ИСПРАВЛЕНО (2026-03-10)
-**Описание:** При поиске общего свободного времени нет возможности выбрать конкретных участников группы
-**Решение:** Добавлен интерактивный список участников с возможностью клика для включения/исключения, визуальная индикация выбранных участников, параметр `userIds` в API запросе
-
-### 9. ~~Бот не отвечает - ошибка 409 Conflict~~
-**Статус:** ИСПРАВЛЕНО И ПРОТЕСТИРОВАНО (2026-03-10)
-**Описание:** Бот переставал отвечать на команды с ошибкой `409: Conflict: terminated by other getUpdates request`
-**Причина:** 
-- Запущено несколько процессов бота одновременно
-- Предыдущий процесс не завершился корректно
-- Остались pending updates от предыдущей сессии
-**Решение:**
-1. Добавлена функция `clearWebhookAndUpdates()` - очищает webhook и pending updates перед запуском
-2. Добавлен retry механизм при ошибке 409 - повторный запуск через 5 секунд
-3. Обновлён алгоритм запуска бота:
-```typescript
-async function startBot() {
-  await clearWebhookAndUpdates()  // Очистка перед запуском
-  await bot.launch()
-  // ... retry при 409
-}
-```
-4. Для перезапуска бота: сначала убить все процессы `pkill -f "node.*index.ts"`
-**Подтверждено пользователем:** 2026-03-10, команды работают
-
-### 10. ~~Команда /find возвращает ошибку "Ошибка при поиске"~~
-**Статус:** ИСПРАВЛЕНО И ПРОТЕСТИРОВАНО (2026-03-10)
-**Описание:** Бот возвращает `❌ Ошибка при поиске` при использовании `/find`, хотя слоты существуют
-**Причина:** 
-- API `/api/find-time` ищет участников в таблице `GroupMember`
-- Бот не добавлял пользователя в `GroupMember` при использовании `/find`
-- `telegramUserId` не передавался в API `/api/groups`
-**Решение:**
-1. Обновлена функция `createOrUpdateGroup()` - добавлен параметр `telegramUserId`
-2. Обновлена команда `/find` - теперь вызывает `getOrCreateUser()` и `createOrUpdateGroup(chatId, title, userId)`
-3. API `/api/groups` добавляет пользователя в `GroupMember` при передаче `telegramUserId`
-4. Добавлено логирование для отладки
-**Проверено:** API возвращает `Group members found: 1`, `POST /api/find-time 200`
+**Причина:** Конфликт между polling mode и webhook mode
+**Решение:** Использовать только webhook mode для продакшн
 
 ---
 
@@ -547,15 +386,9 @@ async function startBot() {
 
 | Дата | Версия | Изменения |
 |------|--------|-----------|
-| 2026-03-10 | 1.8 | **Fix /find command:** добавление пользователя в GroupMember, логирование, исправлены ошибки API |
-| 2026-03-10 | 1.7 | **Fix Bot 409 Conflict:** очистка webhook/pending updates, retry механизм, стабильный запуск |
-| 2026-03-10 | 1.6 | **Telegram Bot (протестирован):** добавлен раздел с командами, архитектурой, форматами данных; бот работает в группах |
-| 2026-03-10 | 1.5 | **Telegram Bot:** реализован мини-сервис бота с командами /start, /help, /initgroup, /find, /add |
-| 2026-03-10 | 1.4 | **UI улучшения:** календарь начинается с Пн, кнопка обновления поиска, выбор участников для поиска слотов |
-| 2026-03-10 | 1.3 | **Деплой подтверждён:** timezone работает корректно, продакшн обновлён |
-| 2026-03-10 | 1.2 | **Переключение на PostgreSQL:** изменён провайдер Prisma с SQLite на PostgreSQL для совместимости с Supabase |
-| 2026-03-10 | 1.1 | **Исправлена работа с timezone:** добавлено поле timezone в Slot, обновлён TimeFinderService, добавлена date-fns-tz |
 | 2026-03-10 | 1.0 | Начальная версия документации |
+| 2026-03-10 | 1.1 | Добавлено: webhook handler, исправление проблемы с ботом в группах |
+| 2026-03-11 | 1.2 | Webhook route в репозитории, поддержка всех команд бота |
 
 ---
 
