@@ -344,7 +344,13 @@ export async function POST(request: NextRequest) {
                 }),
               })
             } else {
-              let message = `✨ *Найдено ${data.count || data.slots.length} слотов:*\n\n`
+              // Get user's timezone for proper time display
+              const userTimezone = user.timezone || 'UTC'
+              
+              let message = `✨ *Найдено ${data.count || data.slots.length} слотов:*
+📍 Часовой пояс: ${userTimezone}
+
+`
               
               message += data.slots.slice(0, 5).map((slot: any) => {
                 const start = new Date(slot.start)
@@ -353,8 +359,17 @@ export async function POST(request: NextRequest) {
                   weekday: 'short',
                   day: 'numeric',
                   month: 'short',
+                  timeZone: userTimezone,
                 })
-                const timeStr = `${start.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} — ${end.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+                const timeStr = `${start.toLocaleTimeString('ru-RU', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  timeZone: userTimezone 
+                })} — ${end.toLocaleTimeString('ru-RU', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  timeZone: userTimezone 
+                })}`
                 return `📅 ${dateStr}\n⏰ ${timeStr}`
               }).join('\n\n')
               
@@ -480,10 +495,13 @@ export async function POST(request: NextRequest) {
             }
           })
           
+          const userTimezone = user.timezone || 'UTC'
+          
           const dateStr = startDateTime.toLocaleDateString('ru-RU', {
             weekday: 'short',
             day: 'numeric',
             month: 'short',
+            timeZone: userTimezone,
           })
           
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -491,7 +509,7 @@ export async function POST(request: NextRequest) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ *Добавлено!*\n\n📅 ${dateStr}\n⏰ ${startTime} — ${endTime}\n📝 ${description || 'Занятое время'}`,
+              text: `✅ *Добавлено!*\n\n📅 ${dateStr}\n⏰ ${startTime} — ${endTime}\n📝 ${description || 'Занятое время'}\n📍 ${userTimezone}`,
               parse_mode: 'Markdown',
             }),
           })
