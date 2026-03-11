@@ -412,11 +412,13 @@ prisma/
 | Бот | Назначение | Переменная окружения | Webhook URL |
 |-----|------------|---------------------|-------------|
 | **Production Bot** (@TimeAgreeBot) | Основной бот для пользователей | `BOT_TOKEN` | `/api/webhook` |
-| **Test Bot** (@FreeTimeV2_bot) | Тестирование изменений перед деплоем | `TEST_BOT_TOKEN` | `/api/test-webhook` |
+| **Test Bot** (@FreeTimeV2_bot) | Тестирование изменений | `TEST_BOT_TOKEN` | `/api/test-webhook` |
 
-**Webhook URLs:**
+**Webhook URLs (оба на production):**
 - Production: `https://freetime-app-jy3k.vercel.app/api/webhook`
 - Test: `https://freetime-app-jy3k.vercel.app/api/test-webhook`
+
+**⚠️ Важно:** Оба бота используют ОДИН И ТОТ ЖЕ код и базу данных!
 
 ### Процесс обновления
 
@@ -431,18 +433,24 @@ tail -20 /home/z/my-project/dev.log
 ```
 
 #### Шаг 2: Тестирование через Test Bot (@FreeTimeV2_bot)
-1. Запушить изменения в GitHub (Vercel задеплоит автоматически)
-2. Добавить @FreeTimeV2_bot в тестовую группу
-3. Протестировать все команды в тестовой группе
-4. Убедиться, что всё работает корректно
+1. Запушить изменения в ветку `develop` (preview deployment)
+   ```bash
+   git checkout develop
+   git add . && git commit -m "test: ..."
+   git push origin develop
+   ```
+2. Протестировать изменения через @FreeTimeV2_bot в тестовой группе
+3. Убедиться, что всё работает корректно
 
 **⚠️ Важно:** Тестовый бот использует ТУ ЖЕ базу данных, что и production!
 
-#### Шаг 3: Деплой на Production
+#### Шаг 3: Деплой на Production (только после успешного теста!)
 ```bash
-# Закоммитить изменения
-git add .
-git commit -m "Описание изменений"
+# Переключиться на master/main
+git checkout master
+
+# Слить изменения из develop
+git merge develop
 
 # Запушить в ОБЕ ветки (Vercel использует одну из них)
 git push origin main
