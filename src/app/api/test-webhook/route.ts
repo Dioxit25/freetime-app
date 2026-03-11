@@ -206,10 +206,10 @@ export async function POST(request: NextRequest) {
       // Handle /start command
       if (command === '/start') {
         const isPrivate = chatType === 'private'
+        const testBotWelcome = '🧪 *ТЕСТОВЫЙ БОТ TimeAgree*\n\n👋 Добро пожаловать!\n\n⚠️ Это тестовый бот для проверки обновлений перед деплоем.\n\n🔹 Добавьте бота в группу\n🔹 Используйте /help для списка команд'
         const messageBody: any = {
           chat_id: chatId,
-          text: isPrivate
-            ? '🧪 *ТЕСТОВЫЙ БОТ TimeAgree*\n\n👋 Добро пожаловать!\n\n⚠️ Это тестовый бот для проверки обновлений перед деплоем.\n\n🔹 Добавьте бота в группу\n🔹 Используйте /help для списка команд',
+          text: isPrivate ? testBotWelcome : `👋 Привет, ${from.first_name}!`,
           parse_mode: 'Markdown',
         }
         
